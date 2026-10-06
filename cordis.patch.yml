@@ -1,0 +1,10 @@
+# Cordis composition patch for dsh-deepseek-peak-whale.
+#
+# 被 profile 的 `dsh.profile.bundles` 引用后，这一层会自动生效。
+# 只插入一行：它挂载 Host 半身（/price 命令）。
+# 浏览器半身由 package.json 的 `dsh.client` 声明，并绑定在 name 为**裸包名**的这一行上
+# （子路径行不会携带半身）。
+- insert:
+    - id: peak-whale
+      name: 'dsh-deepseek-peak-whale'
+      config: {}

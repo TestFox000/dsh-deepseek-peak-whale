@@ -1,0 +1,57 @@
+{
+  "name": "dsh-deepseek-peak-whale",
+  "version": "0.4.6",
+  "private": true,
+  "description": "在侧栏显示 DeepSeek 峰谷计价状态与账户钱包：小鲸鱼娘 + 距半价倒计时 + 官方价格表 + 余额与当日费用。",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node test/run-all.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "src",
+    "vendor",
+    "cordis.patch.yml",
+    "icon.png",
+    "LICENSE",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OWNER/dsh-deepseek-peak-whale.git"
+  },
+  "bugs": {
+    "url": "https://github.com/OWNER/dsh-deepseek-peak-whale/issues"
+  },
+  "homepage": "https://github.com/OWNER/dsh-deepseek-peak-whale#readme",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "deepseek-harness",
+    "pricing",
+    "peak",
+    "off-peak",
+    "balance",
+    "usage"
+  ]
+}

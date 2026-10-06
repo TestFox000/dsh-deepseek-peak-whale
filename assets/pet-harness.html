@@ -1,0 +1,338 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>pet harness</title>
+<style>
+  body{margin:0;height:100vh;background:#1b1e26;font:12px/1.5 monospace;color:#cfd6e4;overflow:hidden}
+  #diag{position:fixed;left:8px;top:8px;z-index:9999;background:#0f1116ee;border:1px solid #333a4d;
+        padding:8px 10px;white-space:pre-wrap;max-width:660px}
+</style>
+<div id="diag">booting…</div>
+<div id="root"></div>
+<script>
+// ── 1. 极简 React 垫片：真实 DOM + hook 槽位 ─────────────────────────────────
+(function () {
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  var hooks = [], cursor = 0, pending = [], onChange = function () {};
+  var SETTERS = {};
+  function setProp(node, key, value) {
+    if (key === 'key' || value === undefined || value === null || value === false) return;
+    if (key === 'ref') { if (value && typeof value === 'object') value.current = node; return; }
+    if (key === 'style') {
+      for (var s in value) if (Object.prototype.hasOwnProperty.call(value, s)) node.style[s] = value[s];
+      return;
+    }
+    if (key === 'children') return;
+    if (key === 'hidden') { node.hidden = !!value; return; }
+    if (/^on[A-Z]/.test(key)) {
+      var ev = key.slice(2).toLowerCase();
+      node.addEventListener(ev, value);
+      return;
+    }
+    if (key === 'className') { node.setAttribute('class', String(value)); return; }
+    node.setAttribute(key, String(value));
+  }
+  function createElement(type, props) {
+    var node;
+    if (typeof type === 'function') {
+      // 组件：直接调用（我们只挂一个组件，够用）
+      var merged = Object.assign({}, props || {});
+      var kids = Array.prototype.slice.call(arguments, 2);
+      merged.children = kids;
+      return type(Object.assign({}, merged, { children: kids }));
+    }
+    node = (type === 'svg' || type === 'g' || type === 'ellipse')
+      ? document.createElementNS(SVG_NS, type)
+      : document.createElement(type);
+    for (var k in (props || {})) if (Object.prototype.hasOwnProperty.call(props, k)) setProp(node, k, props[k]);
+    var children = Array.prototype.slice.call(arguments, 2).flat(Infinity);
+    children.forEach(function (child) {
+      if (child === null || child === undefined || child === false) return;
+      node.appendChild(typeof child === 'object' && child.nodeType ? child : document.createTextNode(String(child)));
+    });
+    return node;
+  }
+  var React = {
+    Fragment: 'fragment',
+    createElement: createElement,
+    useState: function (init) {
+      var i = cursor++;
+      if (!(i in hooks)) hooks[i] = typeof init === 'function' ? init() : init;
+      var setter = function (v) {
+        hooks[i] = typeof v === 'function' ? v(hooks[i]) : v;
+        onChange();
+      };
+      SETTERS[i] = setter;
+      return [hooks[i], setter];
+    },
+    useEffect: function (fn) { var i = cursor++; if (i in hooks) return; hooks[i] = true; pending.push(fn); },
+    useRef: function (init) { var i = cursor++; if (!(i in hooks)) hooks[i] = { current: init === undefined ? null : init }; return hooks[i]; },
+    useMemo: function (fn) { cursor++; return fn(); },
+  };
+  window.__React = React;
+  window.__reactShim = {
+    reset: function () { hooks.length = 0; cursor = 0; pending = []; },
+    beginRender: function () { cursor = 0; },
+    runEffects: function () { var q = pending; pending = []; q.forEach(function (f) { f(); }); },
+    setOnChange: function (fn) { onChange = fn; },
+  };
+})();
+
+// ── 2. 模块加载器握手（client.js 会调它）────────────────────────────────────
+window.__ModuleLoader__ = {
+  load: function (def) { window.__PLUGIN_DEF__ = def; },
+};
+
+// ── 3. rAF 换成手动虚拟时钟（无头下 rAF 会饿死）────────────────────────────
+(function () {
+  var cb = null;
+  window.requestAnimationFrame = function (fn) { cb = fn; return 1; };
+  window.cancelAnimationFrame = function () { cb = null; };
+  var t = performance.now();
+  window.__tick = function (frames, dtMs) {
+    dtMs = dtMs || 16;
+    for (var i = 0; i < frames; i++) {
+      t += dtMs;
+      var fn = cb; cb = null;
+      if (fn) fn(t);
+      else return i; // 循环没续上，提前结束
+    }
+    return frames;
+  };
+  window.__hasLoop = function () { return !!cb; };
+})();
+</script>
+<script src="../client.js"></script>
+<script>
+// ── 4. 挂载我们真正的组件 ────────────────────────────────────────────────────
+(function () {
+  var lines = [], errs = [];
+  var diag = document.getElementById('diag');
+  function push(s) { lines.push(s); diag.textContent = lines.join('\n'); }
+  /** 真实时钟的等待：虚拟时钟只包了 rAF，Promise 要靠它让出事件循环。 */
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  window.onerror = function (m, u, l) { errs.push('onerror: ' + m + ' @' + l); };
+  window.addEventListener('unhandledrejection', function (e) { errs.push('rejection: ' + (e.reason && e.reason.message || e.reason)); });
+
+  var realWarn = console.warn;
+  console.warn = function () { var a = [].slice.call(arguments).map(String).join(' '); errs.push('warn: ' + a); realWarn.apply(console, arguments); };
+
+  try {
+    var def = window.__PLUGIN_DEF__;
+    if (!def) throw new Error('client.js 没有调用 __ModuleLoader__.load');
+    var React = window.__React;
+    var plugin = def.factory(function (name) {
+      if (name === 'react') return React;
+      throw new Error('意外 require(' + name + ')');
+    });
+
+    // ── mock 掉优化/余额两条路由：不联网、不花钱，专注验证「写回 → 撤销」 ────
+    // 真实 key 的路径由 test/optimize.test.mjs 用假 fetch 覆盖；这里只测浏览器半身。
+    window.fetch = function (url, options) {
+      var target = String(url);
+      if (target.indexOf('/api/optimize') !== -1) {
+        var body = {};
+        try { body = JSON.parse((options && options.body) || '{}'); } catch (e) { body = {}; }
+        var optimized = '【优化后】' + (body.text || '') + '——补全了上下文、约束与输出格式';
+        return Promise.resolve(new Response(
+          JSON.stringify({ ok: true, optimized: optimized, model: 'deepseek-v4-pro' }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ));
+      }
+      if (target.indexOf('/api/wallet') !== -1) {
+        return Promise.resolve(new Response(
+          JSON.stringify({ ok: true, account: { status: 'signed-out' }, balance: { status: 'unknown' },
+            today: { date: '2026-10-05', usd: 0.0042, requests: 1, tokens: {}, isPeak: false } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ));
+      }
+      return Promise.reject(new Error('mock fetch 未覆盖: ' + target));
+    };
+    var slots = { inject: function (k, cb) { cb(); }, register: function () { return function () {}; } };
+    plugin.apply({ get: function () { return slots; }, effect: function (fn) { fn(); } });
+
+    // 挂载 WhaleRoamer 到 #root
+    var render = function () {
+      window.__reactShim.beginRender();
+      return React.createElement(plugin.WhaleRoamer, {});
+    };
+    // 组件的第一次 commit 就是「初始化完成」（ready:true）。用它触发检查，
+    // 不要用轮询定时器：虚拟时间会被一堆 timer 瞬间烧光，贴图解码反而轮不上。
+    window.__reactShim.setOnChange(function () {
+      // 重渲染本身不重建 DOM：整体重建会毁掉 pet-core 持有的 SVG 节点，
+      // 而本组件除菜单外都是命令式更新。
+      window.__RERENDERS__ = (window.__RERENDERS__ || 0) + 1;
+      if (!window.__ranChecks) {
+        window.__ranChecks = true;
+        runChecks();
+      }
+    });
+    window.__reactShim.reset();
+    var rootEl = document.getElementById('root');
+    rootEl.appendChild(render());
+    window.__reactShim.runEffects();
+    push('mounted; build=ig.dsg; 等 figure 加载…');
+  } catch (e) {
+    push('FATAL: ' + (e.stack || e.message));
+    return;
+  }
+
+  // async：优化链路里有 Promise（mock fetch → 写回），要让出事件循环才能断言
+  async function runChecks() {
+    try {
+      var pet = document.querySelector('.pw-pet');
+      var hit = document.querySelector('.pw-hitbox');
+      var bubble = document.querySelector('.pw-bubble');
+      if (!pet || !hit || !bubble) throw new Error('缺少关键节点');
+      push('初始化完成 errs=' + errs.length);
+
+      // 推进到落地站稳（掉落进场约 1s）
+      window.__tick(120);
+      var r = pet.getBoundingClientRect();
+      push('落地: pet rect = ' + [r.left, r.top, r.width, r.height].map(Math.round).join(','));
+      if (r.width < 40 || r.height < 40) throw new Error('宠物渲染尺寸异常: ' + r.width + 'x' + r.height);
+
+      // 命中区必须贴着她的身体（容差 2px）
+      var hr = hit.getBoundingClientRect();
+      var dx = Math.abs(hr.left - r.left), dy = Math.abs(hr.top - r.top);
+      var dw = Math.abs(hr.width - r.width), dh = Math.abs(hr.height - r.height);
+      push('命中区跟随: Δ=' + [dx, dy, dw, dh].map(function (v) { return v.toFixed(1); }).join('/'));
+      if (Math.max(dx, dy, dw, dh) > 2) throw new Error('命中区没有贴合身体');
+
+      // 真实 PointerEvent：按下 → 移动 → 抬起
+      var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      hit.dispatchEvent(new PointerEvent('pointerdown', { clientX: cx, clientY: cy, button: 0, pointerId: 1, bubbles: true }));
+      window.__tick(4);
+      hit.dispatchEvent(new PointerEvent('pointermove', { clientX: cx + 30, clientY: cy - 20, pointerId: 1, bubbles: true }));
+      window.__tick(6);
+      hit.dispatchEvent(new PointerEvent('pointermove', { clientX: cx + 220, clientY: cy - 120, pointerId: 1, bubbles: true }));
+      window.__tick(6);
+      var r3 = pet.getBoundingClientRect();
+      push('拎起来后 pet: ' + [r3.left, r3.top].map(Math.round).join(','));
+      if (Math.abs(r3.left - r.left) < 20) throw new Error('拖动没有让她移动');
+      hit.dispatchEvent(new PointerEvent('pointerup', { clientX: cx + 220, clientY: cy - 120, pointerId: 1, bubbles: true }));
+      window.__tick(220);
+      var r4 = pet.getBoundingClientRect();
+      push('抛出落地: ' + [r4.left, r4.top].map(Math.round).join(',') + ' errs=' + errs.length);
+
+      // ── 打字回避：把文本框正好压在她身上 → 打字 → 她必须走到框外 ────────────
+      // 这条是行为断言，不是「没抛错」：文本框按她当前中心摆，保证起点必然挡路，
+      // 然后逐帧推进，直到她的身体完全离开文本框区域（横向 ±40px 的缝）。
+      var rp0 = pet.getBoundingClientRect();
+      var box = document.createElement('textarea');
+      box.setAttribute('aria-label', 'avoid-check');
+      box.style.cssText = 'position:fixed;height:72px;width:420px;bottom:48px;z-index:9999;'
+        + 'left:' + Math.round(Math.max(8, Math.min(window.innerWidth - 428, rp0.left + rp0.width / 2 - 210))) + 'px;'
+        + 'border:2px solid #ff6b6b;background:#0f1116;color:#cfd6e4;font:14px monospace;';
+      document.body.appendChild(box);
+      box.value = '';
+      box.focus();
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+      window.__tick(2); // 第一帧里 avoidWhileTyping 才会下令
+      var boxRect = box.getBoundingClientRect();
+      var zoneL = boxRect.left - 40; // 与 editableZone 的横向外扩一致
+      var zoneR = boxRect.right + 40;
+      var clearOfBox = function (rect) { return rect.right <= zoneL || rect.left >= zoneR; };
+      var guard = 0;
+      while (!clearOfBox(pet.getBoundingClientRect()) && guard < 900) {
+        window.__tick(1);
+        guard += 1;
+      }
+      var rp2 = pet.getBoundingClientRect();
+      push('打字回避: x ' + Math.round(rp0.left) + ' → ' + Math.round(rp2.left)
+        + '（' + guard + ' 帧）' + (clearOfBox(rp2) ? ' 已离开文本框区域' : ' 仍在框内'));
+      if (!clearOfBox(rp2)) {
+        throw new Error('打字了她还站在文本框区域里（guard=' + guard + '）');
+      }
+
+      // ── 提示词优化：填上原文 → 把她**拖到文本框上**松手 → 写回 → 撤销 ──────
+      // 走的是真实的指针链路（pointerdown/move/up → dropAt 就地放下 → 投递），
+      // 只有「上游」被 mock 掉了，所以这条断言覆盖的是浏览器半身的全部行为。
+      var original = '帮我把这段日志里的错误挑出来，按模块分类，输出 Markdown 表格';
+      box.value = original;
+      box.dispatchEvent(new Event('input', { bubbles: true })); // 让插件记住这是「文本框」
+      box.focus();
+      window.__tick(2);
+
+      var from = pet.getBoundingClientRect();
+      var startPt = { x: from.left + from.width / 2, y: from.top + from.height / 2 };
+      var targetRect = box.getBoundingClientRect();
+      var endPt = { x: targetRect.left + targetRect.width / 2, y: targetRect.top + targetRect.height / 2 };
+      hit.dispatchEvent(new PointerEvent('pointerdown', {
+        clientX: startPt.x, clientY: startPt.y, button: 0, pointerId: 3, bubbles: true,
+      }));
+      window.__tick(2);
+      // 慢慢挪过去（>6px 才算拖动，否则 pet-core 只当是点一下）
+      for (var step = 1; step <= 6; step++) {
+        hit.dispatchEvent(new PointerEvent('pointermove', {
+          clientX: startPt.x + (endPt.x - startPt.x) * step / 6,
+          clientY: startPt.y + (endPt.y - startPt.y) * step / 6,
+          pointerId: 3, bubbles: true,
+        }));
+        window.__tick(2);
+      }
+      var beforeDrop = box.value;
+      hit.dispatchEvent(new PointerEvent('pointerup', {
+        clientX: endPt.x, clientY: endPt.y, button: 0, pointerId: 3, bubbles: true,
+      }));
+      await sleep(150); // 等 mock fetch 的 then 链跑完（真实 setTimeout）
+      window.__tick(40);
+
+      var api = plugin.__whaleApi;
+      if (!api || !api.store) throw new Error('拿不到 __whaleApi 测试钩子');
+      push('投递: pill=' + (api.store.pill && api.store.pill.kind)
+        + ' undo=' + !!api.store.undo
+        + ' 文本=' + (box.value === beforeDrop ? '未变' : '已换'));
+      if (api.store.pill && api.store.pill.kind !== 'done') {
+        throw new Error('优化失败: ' + api.store.pill.text);
+      }
+      if (box.value === beforeDrop) throw new Error('拖上去松手后文本框没有被改写（投递没触发）');
+      if (box.value.indexOf('【优化后】') !== 0) throw new Error('写回的不是优化结果: ' + box.value.slice(0, 40));
+      if (!api.store.undo) throw new Error('没有留下可撤销的原稿');
+
+      // 撤销：原稿必须一字不差地回来
+      api.undoOptimize();
+      window.__tick(5);
+      push('撤销: ' + (box.value === original ? '原稿已写回' : '写回失败 → ' + box.value.slice(0, 40)));
+      if (box.value !== original) throw new Error('撤销没有把原稿写回');
+      if (api.store.undo) throw new Error('撤销之后还留着 undo 状态');
+      if (api.store.pill) throw new Error('撤销之后胶囊还没收掉');
+
+      // 投递完她必须主动让开（api.avoidUntil 那道门）：落地 → 走出回避区
+      var leaveGuard = 0;
+      while (!clearOfBox(pet.getBoundingClientRect()) && leaveGuard < 900) {
+        window.__tick(1);
+        leaveGuard += 1;
+      }
+      push('投递后让开: ' + leaveGuard + ' 帧, 她 x=' + Math.round(pet.getBoundingClientRect().left)
+        + ' 框 x=' + Math.round(box.getBoundingClientRect().left));
+      if (!clearOfBox(pet.getBoundingClientRect())) {
+        throw new Error('投递完她还站在文本框上（应主动让开，guard=' + leaveGuard + '）');
+      }
+
+      // 台词：逐帧推进到首次开口（GREET_DELAY≈9s），**在她说出来时停下**再截图。
+      // 不能只在推进结束时检查：一句台词说完 + 停留 1.7s 之后气泡会自动隐藏，
+      // 那样只能看到 hidden=true，误判成"没说话"。
+      var seen = false, text = '';
+      for (var i = 0; i < 900 && !seen; i++) {
+        window.__tick(1);
+        if (!bubble.hidden && bubble.textContent.length > 0) {
+          text = bubble.textContent;
+          if (text.length >= 6) seen = true; // 已经揭示出小半句，够截图看
+        }
+      }
+      push('气泡: 出现过=' + seen + ' text="' + text + '"');
+      if (!seen) throw new Error('等到 ' + Math.round(900 * 16 / 1000) + 's 仍没开口');
+      var br = bubble.getBoundingClientRect();
+      var pr = pet.getBoundingClientRect();
+      push('气泡位置: ' + [br.left, br.top].map(Math.round).join(',') + '  她头顶 y≈' + Math.round(pr.top));
+      if (br.top > pr.top + 20) throw new Error('气泡没在头顶上方');
+
+      var hr2 = hit.getBoundingClientRect();
+      push('命中区尺寸: ' + Math.round(hr2.width) + 'x' + Math.round(hr2.height) + '（应≈她的尺寸）');
+      push('完成: errs=' + errs.length + (errs.length ? '\n' + errs.slice(0, 3).join('\n') : ''));
+    } catch (e) {
+      push('FAIL: ' + (e.stack || e.message) + '\nerrs=' + errs.length + (errs.length ? '\n' + errs.slice(0, 3).join('\n') : ''));
+    }
+  }
+})();
+</script>
