@@ -3,8 +3,9 @@
  *
  * 职责三件：
  *   1. 注册 `/price` 命令：会话里打印当前峰谷时段、距半价倒计时与官方价格表；
- *   2. 注册 `/balance` 命令：打印**账户余额**与**今日（北京时间）已花费用**；
- *   3. 提供这两样数据本身 —— 折算 `session/event` 记当日账本，
+ *   2. 注册 `/balance` 命令：打印**账户余额**与**今日消费**；
+ *   3. 提供这两样数据本身 —— 余额与今日消费都取自**官方**账户读数
+ *      （余额接口 + 它的逐次采样差分，见 src/official.js），
  *      再经 `/dsh-deepseek-peak-whale/api/wallet` 这条 HTTP 路由喂给浏览器半身。
  *
  * 界面部分（侧栏状态条、详情浮层）在 client.js。
@@ -21,28 +22,41 @@ import {
   PEAK_UTC_WINDOWS,
   PRICING_AS_OF,
   PRICING_URL,
+  PRICING_URL_CN,
   WEEKDAY_CN,
   beijingParts,
   boundaryLabel,
   describePeriod,
   formatBeijingFull,
+  formatClock,
+  formatCny,
+  formatCnyAmount,
   formatDuration,
   formatMoney,
   formatTokens,
-  formatUsd,
-  formatUsdAmount,
   priceOf,
   summary,
 } from './src/peak.js';
-import { createLedger, daySnapshot, emptyState } from './src/wallet.js';
+import {
+  USAGE_URL,
+  createOfficialTracker,
+  daySpend,
+  emptyOfficialState,
+  fetchOfficialBalance,
+} from './src/official.js';
+import { createLedger, daySnapshot, emptyState, exportLedgerCSV } from './src/wallet.js';
 import {
   DEFAULTS as OPTIMIZE_DEFAULTS,
   createOptimizeRunner,
   ensureSettingsFile,
+  optimize3,
+  readSettings,
   readUiSettings,
   settingsPath,
   writeUiSettings,
 } from './src/optimize.js';
+import { optimize3ViaWebChat } from './src/webchat.js';
+import { createSessionRouteRunner, routeHintOf } from './src/sessionllm.js';
 
 /** Cordis 插件名（与 cordis.patch.yml 的 id 对应）。 */
 export const name = 'peak-whale';
@@ -53,6 +67,7 @@ export const name = 'peak-whale';
  * 安装型包没有它 —— 官方插件（如 dsh-webhook-github）同样用 webServer 注册路由。
  */
 export const WALLET_ROUTE = '/dsh-deepseek-peak-whale/api/wallet';
+export const WALLET_EXPORT_ROUTE = '/dsh-deepseek-peak-whale/api/wallet/export';
 
 /** 余额查询的缓存时长：`getBalance` 要打 Platform，不该每个标签页各打一次。 */
 export const BALANCE_TTL_MS = 45000;
@@ -64,6 +79,14 @@ export const BALANCE_TTL_MS = 45000;
  * 而且跨源直连 `api.deepseek.com` 还要赌 CORS —— Host 侧一个 fetch 就没这些事。
  */
 export const OPTIMIZE_ROUTE = '/dsh-deepseek-peak-whale/api/optimize';
+
+/**
+ * 三版优化路由：`POST /dsh-deepseek-peak-whale/api/optimize3`，body `{ text }` →
+ * `{ ok, variants: [{key,label,optimized,unchanged,usage,cached}, …] }`。
+ *
+ * 界面拿到后摆出「更详细 / 更专业 / AI 自主+建议 / 不优化了」四选一气泡。
+ */
+export const OPTIMIZE3_ROUTE = '/dsh-deepseek-peak-whale/api/optimize3';
 
 /**
  * UI 设置（详情页模式 / 优化开关）的 HTTP 路径：GET 读取、POST 写入。
@@ -114,6 +137,15 @@ export function ledgerFile(profileName) {
   const profile = String(profileName ?? 'default').replace(/[^\w.-]+/g, '-') || 'default';
   return path.join(ledgerDir(), `wallet.${profile}.json`);
 }
+
+/** 官方余额采样快照，同样按 profile 分文件。 */
+export function officialFile(profileName) {
+  const profile = String(profileName ?? 'default').replace(/[^\w.-]+/g, '-') || 'default';
+  return path.join(ledgerDir(), `official.${profile}.json`);
+}
+
+/** 官方余额的采样间隔：5 分钟一轮（余额接口很轻，采样密一些「消费」才不漏）。 */
+export const SAMPLE_INTERVAL_MS = 5 * 60 * 1000;
 
 /** 读取 profile 名（读不到就回落 `default`）。 */
 function profileNameOf(ctx) {
@@ -241,10 +273,19 @@ export function normalizeBalance(balance) {
  * 组装 `/api/wallet` 的响应体 —— 纯函数式的组装（读取由调用方注入），
  * 所以能在没有网络、没有账号的测试里跑通。
  *
- * @param {{reader: Function, ledger: {snapshot: Function}|null, locale?: string, now?: Date, profile?: string}} options
+ * **余额与今日消费都来自官方**：
+ *   · `balance` —— 官方余额接口的原始读数（经 `normalizeBalance` 收敛）；
+ *   · `today`   —— 官方余额的**逐次采样差分**（见 src/official.js）。
+ * 本地那份「牌价 × token」的估算**只保留在 `session` 里当参考**，
+ * 它不出现在界面的金额位置（口径不同，摆在一起只会互相打架）。
+ *
+ * @param {{reader: Function, ledger?: {snapshot: Function}|null,
+ *          official?: {record: Function, snapshot: Function}|null,
+ *          locale?: string, now?: Date, profile?: string}} options
  */
 export async function buildWalletPayload(options) {
   const now = options.now instanceof Date ? options.now : new Date();
+  const at = now.getTime();
   let account = { state: null, balance: null, unavailable: true };
   if (typeof options.reader === 'function') {
     try {
@@ -256,27 +297,67 @@ export async function buildWalletPayload(options) {
   const state = account.state;
   const known = state && (state.status === 'signed-out' || state.status === 'credential-stored');
   const links = state && state.links && typeof state.links === 'object' ? state.links : {};
+
+  // ── 余额来源：优先直接打官方余额接口（用 API key），拿不到再回落账户服务 ──
+  // 账户服务给的余额也是官方数字，但走的是 DSH 登录态；直接用 API key 打
+  // /user/balance 更贴合「查询官网」，而且不依赖 DSH 账户服务是否就绪。
+  let balanceRaw = account.balance;
+  if (typeof options.officialBalance === 'function') {
+    try {
+      const ob = await options.officialBalance();
+      if (ob && ob.status === 'ready') balanceRaw = ob;
+    } catch { /* 官方接口失败就回落账户服务的余额 */ }
+  }
+  const balance = normalizeBalance(balanceRaw);
+
+  // ── 今日消费：官方口径 ────────────────────────────────────────────────────
+  // 每读一次余额就记一次采样，消费 = 当天余额的下降量累计（充值/赠金不计入）。
   let today;
   try {
-    today = options.ledger ? options.ledger.snapshot(now.getTime()) : daySnapshot(emptyState(), now.getTime());
+    if (options.official) {
+      options.official.record(balance, at);
+      today = options.official.snapshot(at);
+    } else {
+      today = daySpend(emptyOfficialState(), at);
+    }
   } catch {
-    today = daySnapshot(emptyState(), now.getTime());
+    today = daySpend(emptyOfficialState(), at);
   }
+
+  // ── 本机会话统计：token 计数（本地，只作参考，不参与任何金额）────────────
+  let session;
+  try {
+    const snap = options.ledger ? options.ledger.snapshot(at) : daySnapshot(emptyState(), at);
+    session = {
+      date: snap.date,
+      requests: snap.requests,
+      tokens: snap.tokens,
+      estimateCny: snap.cny,
+    };
+  } catch {
+    const snap = daySnapshot(emptyState(), at);
+    session = { date: snap.date, requests: snap.requests, tokens: snap.tokens, estimateCny: snap.cny };
+  }
+
   return {
     ok: true,
-    nowMs: now.getTime(),
+    nowMs: at,
     profile: options.profile ?? 'default',
     account: {
       status: account.unavailable ? 'unavailable' : known ? state.status : 'unknown',
       topUpUrl: typeof links.topUpUrl === 'string' ? links.topUpUrl : null,
       usageUrl: typeof links.usageUrl === 'string' ? links.usageUrl : null,
     },
-    balance: normalizeBalance(account.balance),
-    today,
-    /** 界面必须把费用写成「估算」：这里没有赠送抵扣、没有议价，也不是账单。 */
-    note: 'estimate',
+    balance,
+    today: { ...today, source: 'official-balance' },
+    /** 本机会话统计（token 计数）；界面的金额位置**不用**它。 */
+    session,
+    /** 界面据此标注来源：今日消费是官方余额差，不是本地牌价估算。 */
+    note: 'official-balance-delta',
     /** UI 设置（详情页模式 / 优化开关）。调用方没给 settingsFile 就不带。 */
     settings: options.settings ?? undefined,
+    /** token 消耗明细的官方入口（拿不到账户链接时的兜底）。 */
+    usageUrl: (typeof links.usageUrl === 'string' && links.usageUrl !== '') ? links.usageUrl : USAGE_URL,
   };
 }
 
@@ -288,8 +369,8 @@ function balanceLines(balance) {
     return [];
   }
   const lines = [];
-  for (const row of balance.wallets) lines.push(`  ${formatMoney(row.balance, row.currency)}（${row.currency || 'USD'}）`);
-  for (const row of balance.bonus) lines.push(`  赠送 ${formatMoney(row.balance, row.currency)}（${row.currency || 'USD'}）`);
+  for (const row of balance.wallets) lines.push(`  ${formatMoney(row.balance, row.currency || 'CNY')}（${row.currency || 'CNY'}）`);
+  for (const row of balance.bonus) lines.push(`  赠送 ${formatMoney(row.balance, row.currency || 'CNY')}（${row.currency || 'CNY'}）`);
   if (lines.length === 0) lines.push('  （钱包为空）');
   return lines;
 }
@@ -300,24 +381,51 @@ export function buildBalanceReport(payload) {
   const statusText = accountStatus === 'credential-stored' || accountStatus === 'signed-out'
     ? (accountStatus === 'signed-out' ? '未登录' : '已登录（凭据在本地）')
     : (accountStatus === 'unavailable' ? '账户服务不可用' : '状态未知');
-  const today = payload?.today ?? daySnapshot(emptyState());
-  const tokens = today.tokens ?? emptyTokensForReport();
+  const today = payload?.today ?? daySpend(emptyOfficialState());
+  const session = payload?.session ?? null;
+  const tokens = session?.tokens ?? emptyTokensForReport();
   const lines = [
     `DeepSeek 账户 · ${payload?.profile ?? 'default'} profile`,
     `登录状态：${statusText}`,
     '余额：',
     ...balanceLines(payload?.balance),
     '',
-    `今日费用（北京时间 ${today.date}，按${today.isPeak ? '峰时全价' : '谷时半价'}档计）：`,
-    `  ${formatUsdAmount(today.usd)} · ${today.requests} 次计费样本`,
-    `  输入·未命中 ${formatTokens(tokens.uncachedInputTokens)} · 缓存命中 ${formatTokens(tokens.cacheReadTokens)}`
-      + ` · 写缓存 ${formatTokens(tokens.cacheWriteTokens)} · 输出 ${formatTokens(tokens.outputTokens)}`,
+    `今日消费（官方口径 · 北京时间 ${today.date}）：`,
   ];
+  if (today.available === false) {
+    lines.push('  暂无采样 —— 插件启动后每 5 分钟读一次官方余额，之后这里才有数。');
+  } else {
+    lines.push(`  ${formatCnyAmount(today.cny)}（${today.currency}）`
+      + ` · ${today.samples} 次官方余额采样`);
+    lines.push(`  采样区间：${today.fullDay ? '当日 00:00 起（覆盖整天）' : `自 ${clockOf(today.since)} 起（当天首次读数）`}`);
+    if (Number.isFinite(today.topUps) && today.topUps > 0) {
+      lines.push(`  期间充值/赠金 ${formatCnyAmount(today.topUps)} —— 已从消费中剔除`);
+    }
+  }
+  if (session) {
+    lines.push(
+      `  本机会话统计（token 计数，仅本插件运行期间）：${session.requests} 次请求`,
+      `    输入·未命中 ${formatTokens(tokens.uncachedInputTokens)} · 缓存命中 ${formatTokens(tokens.cacheReadTokens)}`
+        + ` · 写缓存 ${formatTokens(tokens.cacheWriteTokens)} · 输出 ${formatTokens(tokens.outputTokens)}`,
+      `    按官方牌价的本地估算（仅供参考，不是账单）：${formatCnyAmount(session.estimateCny)}`,
+    );
+  }
   if (payload?.account?.topUpUrl) lines.push(`充值：${payload.account.topUpUrl}`);
-  if (payload?.account?.usageUrl) lines.push(`官方用量：${payload.account.usageUrl}`);
-  lines.push('说明：费用按官方牌价估算（谷时按半价），不含赠送抵扣与议价折扣，不是账单。');
-  lines.push('数据来源：会话日志里的 provider 报告用量；余额来自 DeepSeek 账户接口。');
+  const usageUrl = payload?.usageUrl ?? payload?.account?.usageUrl ?? USAGE_URL;
+  lines.push(`token 消耗明细（官方页面）：${usageUrl}`);
+  lines.push('说明：余额与今日消费都取自官方余额接口（消费 = 当天余额下降量累计），');
+  lines.push('      不含「插件没运行时发生的采样空档」之外的口径换算，也不是账单。');
   return lines.join('\n');
+}
+
+/** 毫秒时间戳 → 北京时间 `HH:MM`（拿不到就 `—`）。 */
+function clockOf(ms) {
+  if (!Number.isFinite(ms)) return '—';
+  try {
+    return formatClock(new Date(ms));
+  } catch {
+    return '—';
+  }
 }
 
 function emptyTokensForReport() {
@@ -339,13 +447,13 @@ export function buildReport(date = new Date()) {
     `当前：${desc.title} —— ${desc.note}`,
     `下次切换：${boundaryLabel(date, s.next)} → ${s.nextIsPeak ? '峰时（全价）' : '谷时（半价）'}，还需 ${formatDuration(s.minutesLeft)}`,
     '',
-    '价格（美元 / 100 万 tokens，谷 / 峰）：',
+    '价格（人民币元 / 100 万 tokens，谷 / 峰）：',
   ];
   for (const model of MODELS) {
     lines.push(
-      `  ${model.name.padEnd(16)} 输入·命中 ${formatUsd(priceOf(model, 'cacheHit', false))}/${formatUsd(priceOf(model, 'cacheHit', true))}` +
-        `  输入·未命中 ${formatUsd(priceOf(model, 'cacheMiss', false))}/${formatUsd(priceOf(model, 'cacheMiss', true))}` +
-        `  输出 ${formatUsd(priceOf(model, 'output', false))}/${formatUsd(priceOf(model, 'output', true))}`,
+      `  ${model.name.padEnd(16)} 输入·命中 ${formatCny(priceOf(model, 'cacheHit', false))}/${formatCny(priceOf(model, 'cacheHit', true))}` +
+        `  输入·未命中 ${formatCny(priceOf(model, 'cacheMiss', false))}/${formatCny(priceOf(model, 'cacheMiss', true))}` +
+        `  输出 ${formatCny(priceOf(model, 'output', false))}/${formatCny(priceOf(model, 'output', true))}`,
     );
   }
   lines.push(
@@ -353,7 +461,7 @@ export function buildReport(date = new Date()) {
     '峰时：UTC 01:00–04:00、06:00–10:00（北京时间 09:00–12:00、14:00–18:00），周一至周五且非法定节假日。',
     `其余时段（含整个周末与节假日）均为谷时，价格恰好减半。当前峰时窗口：${PEAK_UTC_WINDOWS.map((w) => `北京 ${w.beijing}`).join('、')}。`,
     `节假日表内置 2026 年（国务院办公厅放假安排），跨年需更新。`,
-    `数据来源：${PRICING_URL}（抓取于 ${PRICING_AS_OF}）`,
+    `数据来源：${PRICING_URL_CN}（抓取于 ${PRICING_AS_OF}；美元牌价见 ${PRICING_URL}）`,
     '账户余额与今日费用：输入 `/balance`。',
   );
   return lines.join('\n');
@@ -410,6 +518,8 @@ export function createWalletHandler(deps) {
       const payload = await buildWalletPayload({
         reader: deps.reader,
         ledger: deps.ledger,
+        official: deps.official ?? null,
+        officialBalance: deps.officialBalance ?? null,
         locale,
         profile: deps.profile,
         settings: typeof deps.settingsFile === 'string' && deps.settingsFile !== ''
@@ -419,6 +529,48 @@ export function createWalletHandler(deps) {
       sendJson(response, 200, payload);
     } catch (error) {
       ctxWarn(deps, `wallet 路由失败: ${error?.message ?? error}`);
+      sendJson(response, 500, { ok: false, error: 'internal error' });
+    }
+  };
+}
+
+/**
+ * 导出账本路由处理器：`GET /dsh-deepseek-peak-whale/api/wallet/export?format=csv`
+ *
+ * format=csv（默认）返回 CSV 文本；format=json 返回完整 JSON。
+ * 同源限定，不发 CORS 头。
+ */
+export function createWalletExportHandler(deps) {
+  return async function handle(request, response) {
+    try {
+      if (request.method !== undefined && request.method !== 'GET' && request.method !== 'HEAD') {
+        sendJson(response, 405, { ok: false, error: 'method not allowed' });
+        return;
+      }
+      let format = 'csv';
+      try {
+        const url = new URL(request.url ?? WALLET_EXPORT_ROUTE, 'http://localhost');
+        format = (url.searchParams.get('format') || 'csv').toLowerCase();
+      } catch { /* 默认 csv */ }
+      const state = deps.ledger?.state ?? emptyState();
+      const rows = Object.entries(state.days || {}).length;
+      if (rows === 0) {
+        sendJson(response, 404, { ok: false, error: 'no ledger data' });
+        return;
+      }
+      if (format === 'json') {
+        sendJson(response, 200, state);
+      } else {
+        const csv = exportLedgerCSV(state);
+        response.writeHead(200, {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': 'attachment; filename="peak-whale-ledger.csv"',
+          'Content-Length': Buffer.byteLength(csv),
+        });
+        response.end(csv);
+      }
+    } catch (error) {
+      ctxWarn(deps, `wallet export 路由失败: ${error?.message ?? error}`);
       sendJson(response, 500, { ok: false, error: 'internal error' });
     }
   };
@@ -468,17 +620,45 @@ export function createOptimizeHandler(deps) {
         parsed = null;
       }
       const text = parsed && typeof parsed === 'object' && typeof parsed.text === 'string' ? parsed.text : '';
-      if (typeof deps.optimize !== 'function') {
+      if (typeof deps.optimize !== 'function' && typeof deps.sessionRunner !== 'function') {
         sendJson(response, 503, { ok: false, error: 'unavailable', message: '优化器没装上（Host 侧未就绪）' });
         return;
       }
-      const result = (await deps.optimize(text)) ?? { ok: false, message: '优化器没有返回结果' };
+      // 通道优先级：请求带 route（浏览器读到当前会话的模型选择）→ 会话同路由
+      // 通道（ctx.llm，与对话共用适配器和凭据）；读不到时先试全局默认模型，
+      // 通道级错误（no-route/no-llm）再回落网关 runner（baseUrl+key）。测试里两个
+      // runner 都可以不注入：那时保持旧网关行为，正好钉住回归。
+      const route = routeHintOf(parsed);
+      const sessionRunner = typeof deps.sessionRunner === 'function' ? deps.sessionRunner : null;
+      let result;
+      if (sessionRunner !== null) {
+        result = await sessionRunner(text, undefined, route);
+        if (result && result.ok !== true
+          && (result.error === 'no-route' || result.error === 'no-llm')
+          && typeof deps.optimize === 'function') {
+          ctxWarn(deps, 'peak-whale: 会话路由通道不可用，optimize 回落网关通道');
+          result = await deps.optimize(text);
+        }
+      } else {
+        result = (await deps.optimize(text)) ?? { ok: false, message: '优化器没有返回结果' };
+      }
       sendJson(response, 200, result.ok
         ? {
           ok: true,
           optimized: typeof result.optimized === 'string' ? result.optimized : '',
           model: typeof result.model === 'string' ? result.model : OPTIMIZE_DEFAULTS.model,
           cached: result.cached === true,
+          unchanged: result.unchanged === true,
+          rounds: typeof result.rounds === 'number' ? result.rounds : 1,
+          // 用量只在**这次真花了钱**时带出（缓存命中没有 usage）：客户端据此在
+          // 完成气泡里显示 token 数，让人看得见这次调用花了多少。
+          usage: result.usage && typeof result.usage === 'object'
+            ? {
+              prompt: Number(result.usage.prompt) || 0,
+              completion: Number(result.usage.completion) || 0,
+              total: Number(result.usage.total) || 0,
+            }
+            : null,
         }
         : {
           ok: false,
@@ -487,6 +667,149 @@ export function createOptimizeHandler(deps) {
         });
     } catch (error) {
       ctxWarn(deps, `optimize 路由失败: ${error?.message ?? error}`);
+      sendJson(response, 500, { ok: false, error: 'internal error', message: 'Host 侧出错了，看一眼 DSH 日志' });
+    }
+  };
+}
+
+/**
+ * 路由处理器：`POST /dsh-deepseek-peak-whale/api/optimize3`，body `{ text }`。
+ *
+ * 并行跑三版（更详细 / 更专业 / AI 自主+建议），返回 `variants` 数组；
+ * 界面据此摆出四选一气泡（三版 + 「还是不优化了吧」）。
+ *
+ * **后端选择**：请求带 `route`（浏览器读到的当前会话模型选择）走会话同路由
+ * 通道（ctx.llm）；否则按 settings：填了 `webToken` 走网页端对话（cookie 方案），
+ * 没填先试全局默认模型（llm），再回落 API key 网关。每次请求都重读 settings，
+ * 用户填完 token 不用重启。
+ *
+ * @param {{optimize: Function, sessionRunner?: Function|null, settingsFile: string, wasmPath?: string, log?: Function}} deps
+ */
+export function createOptimize3Handler(deps) {
+  const MAX_BODY = 64 * 1024;
+  return async function handle(request, response) {
+    try {
+      if (request.method !== 'POST') {
+        sendJson(response, 405, { ok: false, error: 'method not allowed' });
+        return;
+      }
+      let body = '';
+      let tooBig = false;
+      if (request && typeof request[Symbol.asyncIterator] === 'function') {
+        for await (const chunk of request) {
+          body += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+          if (body.length > MAX_BODY) {
+            tooBig = true;
+            break;
+          }
+        }
+      }
+      if (tooBig) {
+        sendJson(response, 413, { ok: false, error: 'too large', message: '请求太大了（上限 64KB），先把提示词精简一点' });
+        return;
+      }
+      let parsed = null;
+      try {
+        parsed = body === '' ? {} : JSON.parse(body);
+      } catch {
+        parsed = null;
+      }
+      const text = parsed && typeof parsed === 'object' && typeof parsed.text === 'string' ? parsed.text : '';
+
+      // 后端选择：填了 webToken 走网页端，否则走 API key
+      let webToken = '';
+      let keepWebSessions = false;
+      let promptStyle = '';
+      let serialVariants = false;
+      let iterateRounds = 2;
+      try {
+        const s = readSettings(deps.settingsFile);
+        webToken = s.webToken || '';
+        keepWebSessions = s.keepWebSessions === true;
+        promptStyle = s.promptStyle || '';
+        serialVariants = s.serialVariants === true;
+        iterateRounds = s.iterateRounds;
+        if (s.webTokenInvalid) {
+          // 粘进来的是取 token 的**命令**而不是 token 本身。必须显式报错：
+          // 当没填会静默回落到按 token 计费的 API 通道，那是白花钱。
+          sendJson(response, 200, {
+            ok: false,
+            error: 'bad_web_token',
+            message: 'settings.json 的 webToken 填的不是 token，而是一段 JS 代码（看起来像 copy(...) 这条命令本身）。'
+              + '请在 chat.deepseek.com 按 F12 → 控制台 → 粘贴该命令并回车 → 再回 settings.json 按 Ctrl+V（此时剪贴板里才是真正的 token）。修好后无需重启。',
+          });
+          return;
+        }
+      } catch { /* settings 读挂了就回落 API key */ }
+
+      // 通道优先级：① 请求带 route（浏览器读到当前会话的模型选择）→ 会话同路由
+      // 通道；② webToken（用户显式配置的网页端对话）；③ 全局默认模型（llm）；
+      // ④ 网关 runner（baseUrl+key）。③④ 之间的回落只在通道级错误
+      // （no-route/no-llm）时发生——上游模型自己的失败（限流/凭据）不回落，
+      // 否则换通道重打三版只是把一次失败变成两次失败。
+      const route = routeHintOf(parsed);
+      const sessionRunner = typeof deps.sessionRunner === 'function' ? deps.sessionRunner : null;
+      let result;
+      if (route !== null && sessionRunner !== null) {
+        let firstError = null;
+        const wrapped = async (t, key) => {
+          const r = await sessionRunner(t, key, route);
+          if (r && r.ok !== true && firstError === null) firstError = r.error;
+          return r;
+        };
+        result = await optimize3(wrapped, text, { serial: serialVariants });
+        if (result.ok !== true && (firstError === 'no-route' || firstError === 'no-llm')
+          && typeof deps.optimize === 'function') {
+          ctxWarn(deps, 'peak-whale: 会话路由通道不可用，optimize3 回落网关通道');
+          result = await optimize3(deps.optimize, text, { serial: serialVariants });
+        }
+      } else if (webToken) {
+        // deps 可注入：没有它就没法在测试里验「回执透传 + 零回执告警」（真调用要联网花钱）。
+        const viaWeb = deps.optimize3ViaWebChat ?? optimize3ViaWebChat;
+        ctxWarn(deps, `peak-whale: optimize3 走网页端对话（cookie 方案，${keepWebSessions ? '保留' : '用完即删'}会话）`);
+        result = await viaWeb(
+          {
+            token: webToken,
+            wasmPath: deps.wasmPath,
+            log: (m) => ctxWarn(deps, m),
+            timeoutMs: 120000,
+            autoDelete: !keepWebSessions,
+            promptStyle,
+            iterateRounds,
+          },
+          text,
+        );
+        // 删除回执必须透传到响应里。2026-10-11 的教训：Host 加载到旧副本时
+        // 会话一条没删，而响应体、日志、本机文件三处都看不出任何异常 ——
+        // 有这两个字段，「删了没删」在 GUI 侧一眼可判。
+        if (!keepWebSessions && Array.isArray(result?.deletedSessions) && result.deletedSessions.length === 0) {
+          ctxWarn(deps, 'peak-whale: ⚠ 用完即删未确认删除任何会话（可能是加载了旧版 webchat.js）');
+        }
+      } else if (sessionRunner !== null) {
+        // 浏览器没读到路由（旧 client / API 直调）：先试全局默认模型，
+        // 通道级错误再回落网关；网关也没装（无 key 的裸装）才报 unavailable。
+        let firstError = null;
+        const wrapped = async (t, key) => {
+          const r = await sessionRunner(t, key, null);
+          if (r && r.ok !== true && firstError === null) firstError = r.error;
+          return r;
+        };
+        result = await optimize3(wrapped, text, { serial: serialVariants });
+        if (result.ok !== true && (firstError === 'no-route' || firstError === 'no-llm')
+          && typeof deps.optimize === 'function') {
+          ctxWarn(deps, 'peak-whale: 默认模型通道不可用，optimize3 回落网关通道');
+          result = await optimize3(deps.optimize, text, { serial: serialVariants });
+        }
+      } else {
+        if (typeof deps.optimize !== 'function') {
+          sendJson(response, 503, { ok: false, error: 'unavailable', message: '优化器没装上（Host 侧未就绪），也没配 webToken' });
+          return;
+        }
+        result = await optimize3(deps.optimize, text, { serial: serialVariants });
+      }
+      sendJson(response, 200, result);
+    } catch (error) {
+      ctxWarn(deps, `optimize3 路由失败: ${error?.message ?? error}`);
       sendJson(response, 500, { ok: false, error: 'internal error', message: 'Host 侧出错了，看一眼 DSH 日志' });
     }
   };
@@ -663,6 +986,24 @@ export function apply(ctx, config = {}) {
       }
     }
 
+    // ── 官方余额快照：今日消费的唯一数据源 ──────────────────────────────────
+    // 消费 = 当天官方余额的下降量累计。采样器每 5 分钟读一次余额接口，
+    // 界面每次拉取 `/api/wallet` 也会顺手记一次（UI 开着时密度自然更高）。
+    const officialPath = typeof config?.officialFile === 'string' && config.officialFile !== ''
+      ? config.officialFile
+      : officialFile(profileNameOf(ctx));
+    let official = null;
+    try {
+      official = createOfficialTracker({ file: officialPath, log: (m) => log('warn', m) });
+    } catch (error) {
+      log('warn', `peak-whale: 官方快照初始化失败（${error?.message ?? error}），今日消费将只在内存中`);
+      try {
+        official = createOfficialTracker({ log: (m) => log('warn', m) });
+      } catch {
+        official = null;
+      }
+    }
+
     // ── 取 Host 服务的统一入口 ──────────────────────────────────────────────
     // 开机时服务可能还没就绪：老式的 ctx.get() 只会**静默拿到 undefined**，
     // 于是路由一条都注册不上（症状：重启后全 404，重新挂载一次又好了）。
@@ -685,10 +1026,40 @@ export function apply(ctx, config = {}) {
       if (ensureSettingsFile(settingsFile)) {
         log('info', `peak-whale: 已创建配置模板 ${settingsFile} —— 把 DeepSeek API key 填进 deepseekApiKey`);
       }
-      optimize = createOptimizeRunner({ file: settingsFile, log: (m) => log('warn', m) });
+      // 优化器的 log 约定是 (message, level?)：完成/用量这类流水走 info，
+      // 失败没给级别时仍落 warn——不能让一条成功日志把告警级别带偏。
+      optimize = createOptimizeRunner({
+        file: settingsFile,
+        log: (m, level) => log(level === 'info' ? 'info' : 'warn', m),
+      });
     } catch (error) {
       log('warn', `peak-whale: 提示词优化器初始化失败（${error?.message ?? error}）`);
       optimize = null;
+    }
+
+    // ── 会话同路由优化通道：借 ctx.llm（与会话共用适配器与凭据）──────────
+    // serviceOf 传的是「取值函数」而非当前值：llm / agentDefaultModel 都可能
+    // 晚于本插件就绪，每次优化请求现取，取不到由 runner 报 no-llm/no-route
+    // 并在路由层回落网关通道——不会因为服务时序把功能永久判死。
+    let sessionRunner = null;
+    try {
+      sessionRunner = createSessionRouteRunner({
+        file: settingsFile,
+        llm: () => serviceOf('llm'),
+        fallbackRoute: () => {
+          try {
+            const adm = serviceOf('agentDefaultModel');
+            const sel = typeof adm?.currentSelection === 'function' ? adm.currentSelection() : null;
+            return sel ?? null;
+          } catch {
+            return null;
+          }
+        },
+        log: (m, level) => log(level === 'info' ? 'info' : 'warn', m),
+      });
+    } catch (error) {
+      log('warn', `peak-whale: 会话路由优化器初始化失败（${error?.message ?? error}）`);
+      sessionRunner = null;
     }
 
     // ── 先撤掉上一次自己注册的东西：热重载幂等，避免同名重复注册 ────────────
@@ -745,6 +1116,24 @@ export function apply(ctx, config = {}) {
       }, 'peak-whale: ledger listener');
     }
 
+    // ── 官方余额直读：用 settings 里的 API key 打 /user/balance（见 src/official.js）──
+    // 定义在外层，/balance 命令与 wallet 路由**共用同一份**；读不到 key / 接口失败都
+    // 回落账户服务的余额，绝不抛。原来它只生在 wireRoutes 闭包里，/balance 命令拿不到
+    // → ReferenceError → 命令永远只回「余额查询失败」（真 bug，已修）。
+    const officialBalance = async () => {
+      try {
+        const s = readSettings(settingsFile);
+        if (s.apiKey === '') return { status: 'failed' };
+        return await fetchOfficialBalance({
+          apiKey: s.apiKey,
+          baseUrl: s.baseUrl,
+          log: (m) => log('warn', m),
+        });
+      } catch {
+        return { status: 'failed' };
+      }
+    };
+
     // ── Host 接线：webServer 路由 + 命令 ────────────────────────────────────
     /**
      * 注册 /price 与 /balance 两条命令。**命令不依赖 webServer**，只依赖
@@ -792,10 +1181,10 @@ export function apply(ctx, config = {}) {
       });
       addCommand({
         name: 'balance',
-        description: '显示 DeepSeek 账户余额与今日（北京时间）已花费用（估算）',
+        description: '显示 DeepSeek 账户余额与今日消费（余额与消费都取自官方账户读数）',
         handler: async () => {
           try {
-            const payload = await buildWalletPayload({ reader, ledger, profile });
+            const payload = await buildWalletPayload({ reader, ledger, official, officialBalance, profile });
             return { kind: 'success', text: buildBalanceReport(payload) };
           } catch (error) {
             return { kind: 'success', text: `余额查询失败：${error?.message ?? error}` };
@@ -848,10 +1237,17 @@ export function apply(ctx, config = {}) {
       // 传**解析函数**而不是服务本体：开机时 deepseekAccount 可能还没注册，
       // 抓一次就会把「此刻没拿到」永久当成「没有账户服务」（余额从此消失）。
       const reader = createAccountReader(() => serviceOf('deepseekAccount'), {});
+      // officialBalance 已在外层定义（/balance 命令与这里共用），不再重复。
       addRoute(
         WALLET_ROUTE,
-        createWalletHandler({ reader, ledger, profile, settingsFile, log: (m) => log('warn', m) }),
+        createWalletHandler({ reader, ledger, official, officialBalance, profile, settingsFile, log: (m) => log('warn', m) }),
         'wallet 路由',
+      );
+      // 导出账本路由
+      addRoute(
+        WALLET_EXPORT_ROUTE,
+        createWalletExportHandler({ ledger, log: (m) => log('warn', m) }),
+        '账本导出路由',
       );
       // 设置路由不依赖优化器装没装上：模式与开关随时可读写。
       addRoute(
@@ -864,10 +1260,23 @@ export function apply(ctx, config = {}) {
       if (optimize) {
         addRoute(
           OPTIMIZE_ROUTE,
-          createOptimizeHandler({ optimize, log: (m) => log('warn', m) }),
+          createOptimizeHandler({ optimize, sessionRunner, log: (m) => log('warn', m) }),
           '提示词优化路由',
         );
       }
+      // optimize3 可以走 webToken（网页端对话，不需要 API key），所以总是注册。
+      // WASM 缓存放在 settings.json 同目录下。
+      addRoute(
+        OPTIMIZE3_ROUTE,
+        createOptimize3Handler({
+          optimize,
+          sessionRunner,
+          settingsFile,
+          wasmPath: path.join(path.dirname(settingsFile), 'sha3_wasm_bg.wasm'),
+          log: (m) => log('warn', m),
+        }),
+        '三版提示词优化路由',
+      );
       ownHostDisposers = offs;
       return () => {
         while (offs.length > 0) {

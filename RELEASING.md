@@ -19,14 +19,38 @@ node tools/pack.mjs --check    # 只做发布自检，不打包
 ```bash
 git init
 git add -A
-git commit -m "release: v0.4.6"
-git tag -a v0.4.6 -m "v0.4.6"
+git commit -m "release: v0.5.0"
+git tag -a v0.5.0 -m "v0.5.0"
 git remote add origin https://github.com/<你的用户名>/dsh-deepseek-peak-whale.git
 git push -u origin main --tags
 ```
 
 推送前记得把 `package.json` 里的 `OWNER` 换成你的 GitHub 用户名
 （`repository` / `bugs` / `homepage` 三处）。
+
+## `vendor/` 里的本地改动（升级上游时必须手工重做）
+
+`vendor/pet-core.js` 与 `vendor/figure.js` 是从
+[Coopanion](https://github.com/) 的桌宠运行时（AGPL-3.0）取过来改的。
+本项目对这两处有**本地改动**，升级上游版本时不会自动合进来，
+必须手工重做，否则会静默丢功能（测试会红，但别指望 git 提示你）：
+
+| 文件 | 本地加的东西 | 漏了会怎样 |
+| --- | --- | --- |
+| `vendor/pet-core.js` | `GESTURES` 手势表（13 个动作）、`gesture()` / `gestureName()` / `setMood()`、`mode` 之外的手势叠加块、mood 弹簧 | 右键「逗她玩」、场景反应、心情驱动尾巴全部失效 |
+| `vendor/figure.js` | `sp.gest` / `sp.mood` 弹簧、手臂 `case '<手势>'` 分支、`gestMood` 参与的尾巴/鳍/呆毛 | 手势演了但**身体不动**（最难察觉的一类哑故障） |
+| `tools/vendor_pet.mjs` | 把 `GESTURES` 加进两处返回对象 | 打包时 `GESTURES` 为 `undefined` |
+
+改完这三处之后**必须**重跑：
+
+```bash
+node tools/vendor_pet.mjs     # 重新生成 pet-runtime.js（IIFE 包装 + 贴图内联）
+node build.mjs                 # 重新生成 client.js
+node test/run-all.mjs          # gesture + style 两套会直接验动作接线
+```
+
+`test/gesture.test.mjs` 会逐个手势断言"pet-core 有 `case`、`figure.js` 有手臂 `case`"，
+就是为了让"只改了一半"这种哑故障在测试阶段就红，而不是等你盯着屏幕看才发现她不抬手。
 
 ## 体积说明
 

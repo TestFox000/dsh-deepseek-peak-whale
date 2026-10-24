@@ -1,13 +1,13 @@
 # dsh-deepseek-peak-whale 🐋
 
-> 在DeepSeek Harness里养一只 鲸鱼娘 ：她告诉你 DeepSeek 现在是不是**半价**，
+> 在 **DeepSeek Harness**（dsh）里养一只**鲸鱼娘**：她告诉你 DeepSeek 现在是不是**半价**，
 > 侧栏挂着**余额 · 今日费用**，平时在窗口底部自由走动、坐下、打盹、眼睛跟着你鼠标转，
 > 还能**拎起来拖、甩出去、摸头顺毛**；写完提示词把她**拖到输入框上松手**，她替你优化好再写回。
 
 ![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)
-![Version 0.4.6](https://img.shields.io/badge/version-0.4.6-blue)
+![Version 0.6.0](https://img.shields.io/badge/version-0.6.0-blue)
 ![DSH plugin](https://img.shields.io/badge/DSH-plugin-brightgreen)
-![Tests: 5 suites](https://img.shields.io/badge/tests-5%20suites-brightgreen)
+![Tests: 10 suites](https://img.shields.io/badge/tests-10%20suites-brightgreen)
 
 **侧栏状态条 + 详情浮层**（浅色/深色 · 简洁版/详细版）：
 
@@ -26,7 +26,7 @@
 
 ```
 （侧栏展开时）  [🐋]  谷时 · 半价                      距峰时 109小时
-                         余额 $12.34 · 赠 $1.00 · 今日 $0.0421   ← 第二行：账户钱包
+                         余额 ¥240.98 · 赠 ¥1.00 · 今日 ¥4.69   ← 第二行：账户钱包
 （侧栏收起成图标轨道时）  [🐋]
 （点击状态条后）  完整价格表 / 下次切换时刻 / 账户余额与今日费用 / 规则依据与数据来源
 （会话里）      /price  峰谷时段与价格表      /balance 余额 + 今日费用
@@ -37,10 +37,14 @@
 （点一下）      戳她 → 随机表情（睡觉时会被戳醒，还会吓一跳）
 （按住拖动）    揪住后颈拎起来 → 拖动 → 松手按速度抛出，落地太快会摔晕
 （你打字时）    无论她在哪，只要挡在文本框前就走开（最近的一侧，远了就跑）
-（拖到文本框上）提示词写完把她拖上去松手 → 优化后写回；
-                期间她头顶冒气泡「正在优化提示词中…」，完成后弹出 √/× 撤销对话框
-                （30 秒未选自动收起；拖动时气泡跟着她走，期间依旧可以互动）
-（右键）        换个姿势 / 摸摸头 / 念句价格 / 回家 / 安静一会儿 / 自由活动
+（拖到文本框上）提示词写完把她拖上去松手 → 并行出三版优化稿；
+                期间她头顶一直冒气泡「正在优化提示词中…」，完成后弹出
+                **选版气泡**（一行一版）：更详细 / 更专业 / AI 自主+建议，
+                每行可「替换」（把框里原文换掉）或「复制」（只进剪贴板）；
+                底部「还是不优化了吧」/「关闭」。每行还标注这版想了多久，
+                对话框语义不设消失时间；三版全挂才提示失败；
+                 拖动时气泡跟着她走，期间依旧可以互动
+（右键）        换个姿势 / 摸摸头 / 撒爱心 / 换个表情 / 念句价格 / 陪她说句话 / 回家 / 自由活动
 ```
 
 - **谷时（半价）**：边框转绿，她念的也是「半价 / 便宜 / 打折」那一组台词。
@@ -79,11 +83,21 @@ B 站 DeepSeek 二创里的蓝发鲸鱼女仆（角色原设「溟月」），�
 `sidebar.footer.action` / `shell.overlay` / `settings.plugins.tab` 三个 Web 槽位；
 Node.js（仅构建与测试需要）。
 
+**方式一：CLI 一条命令（推荐）**
+
+```bash
+dsh plugin --profile web add github:TestFox000/dsh-deepseek-peak-whale
+```
+
+装完重启 DSH 即可。以下方式二适合想改代码、或 CLI 不通时的手动安装。
+
+**方式二：clone + 登记本地包（备选）**
+
 ```powershell
 # 1) 克隆到本机插件目录并构建自检（整仓约 6 MB，含 AGPL 要求的 vendor/ 源文件）
-git clone https://github.com/OWNER/dsh-deepseek-peak-whale.git "$env:USERPROFILE\.dsh\local-packages\dsh-deepseek-peak-whale"
+git clone https://github.com/TestFox000/dsh-deepseek-peak-whale.git "$env:USERPROFILE\.dsh\local-packages\dsh-deepseek-peak-whale"
 cd "$env:USERPROFILE\.dsh\local-packages\dsh-deepseek-peak-whale"
-npm run build && npm test    # 重新生成 client.js + 跑五套测试，应全部通过
+npm run build && npm test    # 重新生成 client.js + 跑十套测试，应全部通过
 ```
 
 ```jsonc
@@ -102,7 +116,7 @@ npm run build && npm test    # 重新生成 client.js + 跑五套测试，应全
 
 3) **重启 DSH** ——侧栏底部出现小鲸鱼，**零配置**即可用。
 
-- 只有「提示词优化」需要填你自己的 API key（设置 → 插件 → 小鲸鱼；保存即生效，key 永不离开本机）。
+- 「提示词优化」默认走**本机 openai-gateway**（`http://127.0.0.1:8326/v1`，与 DSH 会话同一条路由，见下文「提示词优化」）；key 留空时自动读 `$DSH_HOME/openai-gateway/api-key`，无需手动配置。
 - **不要**再把 `peak-whale` 写进 profile 的 `cordis.patch.yml`：被 `dsh.profile.bundles`
   引用的包会自动应用自带 patch，两处都写会报 `duplicate loader entry id: peak-whale`。
 - 更新已安装副本、重启后路由掉线等踩坑，见下文**「二、安装细节与更新踩坑」**。
@@ -127,12 +141,17 @@ npm run build && npm test    # 重新生成 client.js + 跑五套测试，应全
 | **峰时** | 周一至周五 **09:00–12:00**、**14:00–18:00**（且非法定节假日） |
 | **谷时** | 其余全部时段；**周末与节假日整天都算谷时**，价格为峰时的一半 |
 
-价格（美元 / 100 万 tokens）：
+价格（**人民币元** / 100 万 tokens，取自官方中文定价页）：
 
 | 模型 | 输入·命中 (谷/峰) | 输入·未命中 (谷/峰) | 输出 (谷/峰) |
 |---|---|---|---|
-| `deepseek-flash` (V4.1-Flash) | 0.003 / 0.006 | 0.15 / 0.30 | 0.60 / 1.20 |
-| `deepseek-v4-pro` (V4-Pro-0813) | 0.022 / 0.044 | 0.66 / 1.32 | 1.98 / 3.96 |
+| `deepseek-flash` (V4.1-Flash) | 0.02 / 0.04 | 1 / 2 | 4 / 8 |
+| `deepseek-v4-pro` (V4-Pro-0813) | 0.15 / 0.30 | 4.5 / 9 | 13.5 / 27 |
+
+> **为什么是人民币而不是美元**：官方中英两页是**两套独立牌价**，不是同一组数字换汇
+> （Flash 命中 ¥0.02 ↔ $0.003 隐含 6.67；V4-Pro 命中 ¥0.15 ↔ $0.022 隐含 6.82，
+> 两个隐含汇率并不相等）。既然余额接口返回的就是人民币账户，本插件**直接采用官方
+> 人民币牌价**，不做任何汇率换算——换算只会引入一层无法自证的误差。
 
 节假日表内置国务院办公厅《关于 2026 年部分节假日安排的通知》
 （国办发明电〔2025〕7 号）：元旦 1/1–1/3、春节 2/15–2/23、清明 4/4–4/6、
@@ -140,6 +159,28 @@ npm run build && npm test    # 重新生成 client.js + 跑五套测试，应全
 
 **关于调休上班的周六/周日**：官方明确「周末整天都算谷时」，所以 5/9、10/10 这类
 调休上班日**仍按谷时**处理。本插件据此只判断「周末」与「法定节假日」，不处理调休上班日。
+
+---
+
+## v0.6.0 更新内容
+
+### 新增
+- **右键菜单**：新增「撒爱心」「换个表情」（10 种表情循环）
+- **设置页**：显示小鲸鱼的心情（亲密度等级 Lv.1~10 + 进度条）
+- **拖拽反馈**：拖到输入框附近时鲸鱼发光提示「再近一点就能投递」
+- **活力度滑块**：设置页新增 0~100 活力度调节，可手动锁定不被亲密度覆盖
+- **多配色切换**：设置页 7 套配色（mint / mono / navigator / claude / fox / purple / lemon）
+- **状态反馈**：打字时鲸鱼竖耳听（setListening），优化时思考气泡（setThinking）
+- **账单导出**：钱包卡片新增「导出账单 CSV」按钮
+- **倒计时增强**：状态条与详情统一显示「距下次谷时/峰时 + 完整时分」
+
+### 改进
+- **贴图 WebP 化**：`client.js` 从 1.8MB 降到 **775KB**（降 62%）
+- **节假日表续期**：覆盖至 2027 年（7 条新增）
+
+### 修复
+- escapeTargetX 精灵偏移未计入（卡右边走不动）
+- bundle.test.mjs 既有 bug（petX 精灵偏移断言）
 
 ---
 
@@ -212,7 +253,7 @@ Copy-Item src "$dest\src" -Recurse -Force
 
 ```jsonc
 {
-  "dependencies": { "dsh-deepseek-peak-whale": "0.4.6" },
+  "dependencies": { "dsh-deepseek-peak-whale": "0.5.0" },
   "dsh": { "profile": { "bundles": [
       /* …既有 bundles… */
       "dsh-deepseek-peak-whale"
@@ -226,10 +267,15 @@ Copy-Item src "$dest\src" -Recurse -Force
 
 装好后 DSH 会热加载浏览器半身；若没出现，重启应用。
 
-4) **要用「提示词优化」得先填 key**：首次启动会自动生成配置模板
-   `$DSH_HOME/peak-whale/settings.json`（未设置 `$DSH_HOME` 时即 `~/.dsh/…`），
-   把 DeepSeek API key 填进 `deepseekApiKey` 就能用了——**保存即生效，不用重启**。
-   余额、当日费用、价格表这三项不需要 key。
+4) **要用「提示词优化」得先填凭证（二选一）**：首次启动会自动生成配置模板
+   `$DSH_HOME/peak-whale/settings.json`（未设置 `$DSH_HOME` 时即 `~/.dsh/…`）——
+   - `webToken`：`chat.deepseek.com` 的登录态（localStorage 里 `userToken` 的 `value`）。
+     走**网页端对话**，不按 token 计费；**填了它 `deepseekApiKey` 就可以不管**。
+   - `deepseekApiKey`：官方 API key，走 `/chat/completions`，按 token 计费。
+
+   两者都空时拖一次会拿到一句「先填一个」的提示。**保存即生效，不用重启**
+   （每次拖拽都重读文件；但 Host 侧代码改动仍需重启一次 DSH）。
+   余额、当日费用、价格表这三项不需要任何凭证。
 
 ---
 
@@ -246,7 +292,7 @@ Copy-Item src "$dest\src" -Recurse -Force
 
 | 位置 | 显示 |
 |---|---|
-| 状态条第二行 | `余额 $12.34 · 今日 $0.0042`（未登录 → `账户 未登录 · 今日 …`；**取不到 → 整行不显示**，原因写在浮层里） |
+| 状态条第二行 | `余额 ¥240.98 · 今日 ¥4.69`（币种跟着余额接口走；未登录 → `账户 未登录 · 今日 …`；**取不到 → 整行不显示**，原因写在浮层里） |
 | 详情浮层的账户卡片 | 账户状态、每个钱包的余额、赠送余额、**今日费用（日期 + 金额，单独一段并放大）**、按哪一档计价、请求次数与 token 分解、充值 / 官方用量入口、估算声明 |
 | `/balance` 命令 | 同上内容的纯文本版 |
 
@@ -260,10 +306,17 @@ Copy-Item src "$dest\src" -Recurse -Force
    负责重试语义）；
 2. 折算规则与 DSH 内置的 `tokenUsage` 投影**逐字对齐**（同 turn/step 的重复样本不改账、
    重试叠加、替换按 delta 调整），所以它和界面里那颗用量甜甜圈不会各说各话；
-3. 按**事发那一刻**的峰/谷档与官方牌价计价（缓存命中/未命中/写缓存/输出四个桶分开算），
+3. 按**事发那一刻**的峰/谷档与官方**人民币**牌价计价（缓存命中/未命中/写缓存/输出四个桶分开算），
    记进**北京时间**的当日格子；
 4. 落盘到 `$DSH_HOME/peak-whale/wallet.<profile>.json`（合并写 + 临时文件 rename，
    损坏时留 `.corrupt-<时间戳>` 备份再从空账继续），**重启不丢当天的账**。
+
+> **账本币种 = 人民币**，金额字段是 `cny`。早期版本按倒推汇率记 `usd`，那不是官方口径，
+> 所以 `LEDGER_VERSION` 升到 2 时**整份丢弃旧账本**（代价只是「今天已花」少算一段）——
+> 宁可少算，也不能把一套错汇率算出的数当对账继续累加。
+>
+> 余额那一行则**跟着接口给的币种走**（当前账户返回 CNY，所以是 `¥`）：
+> 钱包标签与货币符号用同一个值，不会出现「余额（CNY）$240.98」这种自相矛盾的行。
 
 浏览器侧同源 fetch `GET /dsh-deepseek-peak-whale/api/wallet?locale=…`（Host 不发 CORS 头、
 响应 `no-store`），60 秒轮询一次。拉取失败时**保留上一份数据**，而不是把界面清空；
@@ -308,7 +361,7 @@ Copy-Item src "$dest\src" -Recurse -Force
 | 抛出去 | 松手 | 按松手瞬间的速度抛飞；速度 >700 有破风声，落地冲击 >1000 会**摔晕** |
 | 入场 | 挂载时 | 从窗口顶部掉下来落到地面（`enter: 'drop'`） |
 | **打字回避** | 在任何文本框里打字 / 把焦点点进文本框 | **无论她在屏幕哪个位置**，只要挡在文本框前就让开到框外最近的一侧；距离 >160px 直接跑过去 |
-| **投递（优化提示词）** | 写完提示词后**把她拖到输入框上松手** | 就地放下（不抛飞）→ 读原文 → 调 `deepseek-v4-pro`（`reasoning_effort: max`）改写 → 写回 → 浮出「撤销优化」；随后她主动让开 |
+| **投递（优化提示词）** | 写完提示词后**把她拖到输入框上松手** | 就地放下（不抛飞）→ 读原文 → 调 `/api/optimize3` **并行出三版**（更详细 / 更专业 / AI 自主+建议）→ 头顶摆**选版气泡**（一行一版，可「替换」/「复制」+「还是不优化了吧」/「关闭」，每行带思考时间）→ 替换才写回；随后她主动让开 |
 
 这些物理与反应**全部来自上游 pet-core**（`pointerDown/Move/Up`、`onEvent('touch')`），
 本插件只负责把浏览器事件转发进去，并把命中区贴到她身上。
@@ -337,47 +390,82 @@ Copy-Item src "$dest\src" -Recurse -Force
 `bundle.test.mjs` 逐个断言；监听器的挂载与摘除也有断言（`helpers.mjs` 的 document 桩
 会记账，React 桩新增了 `__unmount()` 来跑 effect 清理）。
 
-#### 提示词优化（把她拖到文本框上）
+#### 提示词优化（把她拖到文本框上 → 三版一行一版）
 
 **用法**：提示词写完之后 → 揪住她拖到输入框上 → 松手。她**不会被抛出去**
 （pet-core 自带的 `dropAt()` 正是「就地放下、no throw」，所以还是没改 vendor）：
 
 1. 认出文本框（聚焦的 → 最近打字的 → 页面上最大的那个，`textarea` / `contenteditable` 都认）；
-2. 读出正文 → `POST /dsh-deepseek-peak-whale/api/optimize` 给 Host；
-3. Host 用**你自己的 API key** 调一次 `deepseek-v4-pro` + `reasoning_effort: max`，
-   系统提示词写死「不改变原意、不增删任务、只输出正文」，Host 再剥掉模型爱加的
-   代码块与客套话；
-4. 写回文本框（走**原型上的原生 setter** + 派发 `input`，React 受控输入才认账），
-   浮出一颗胶囊：**「提示词已优化 [撤销优化]」**；
-5. 她念一句「优化好了，不满意可以撤销～」，随后**主动走出文本框区域**
-   ——复用打字回避那道门，只是由 `api.avoidUntil` 打开。
+2. 读出正文 → `POST /dsh-deepseek-peak-whale/api/optimize3` 给 Host；
+3. Host **并行出三版**（每版一套独立的系统提示词偏向）：
+   - **更详细** —— 补背景、补约束、补输出格式；
+   - **更专业** —— 按该领域的正式文体与术语重写；
+   - **AI 自主 + 建议** —— 模型自己判断该往哪改，并附上改进建议；
+4. 气泡**一行一版**，每行写着这版**想了多久**（缓存命中的那版没有耗时，就不显示，
+   绝不编一个「0s」）；每行有两个动作：
+   - **替换** —— 把框里原文换成这一版，气泡换成一瞬的「已换好」提示；
+   - **复制** —— 只把这版正文塞进剪贴板，**框里原文不动**，气泡留着让你接着挑；
+5. 底部两条：**「还是不优化了吧」**（原稿一字不动、气泡收掉）/ **「关闭」**
+   （同样什么都不写，只是先收气泡）；
+6. 这一版是**对话框语义**，没有倒计时，不自动消失；若框里不让写进去
+   （有些 `contenteditable` 不接受派发 `input`），气泡自动降级成 **paste** 态：
+   正文摊在气泡里 + 「复制」+「关闭」。
 
-**撤销**（不想要了就撤）：
+> 期间她头顶一直挂着「正在优化提示词中…」的气泡；**只要有一版成功就摆出来**，
+> 只挂了的那几版不显示——三版全挂才回一句失败原因。
 
-| 入口 | 说明 |
-|---|---|
-| 胶囊上的「撤销优化」 | 一键把原稿一字不差写回去 |
-| 右键菜单 → 撤销提示词优化 | 胶囊被你改字或 30 秒超时收掉之后，从这里照样能撤 |
-| **自动失效** | **你改过文本框内容后，撤销自己收起**——绝不能拿旧稿盖掉你的新输入 |
+**两条后端**（`settings.json` 里**填了 `webToken` 就走网页端**，没填就走 API key）：
+
+| 后端 | 触发条件 | 打哪里 | 花钱吗 |
+|---|---|---|---|
+| **网页端对话（cookie 方案）** | `webToken` 非空 | `chat.deepseek.com` 的 `/api/v0/chat/*`（建会话 → 取 PoW → WASM 解题 → SSE 流） | 不走 API 计费，用你的网页端额度 |
+| **API key** | `webToken` 为空 | `api.deepseek.com` 的 `/chat/completions` | 按 token 计费 |
+
+每次请求**重读** `settings.json`，所以填完 token 不用重启（但 Host 侧代码改动仍需重启一次 DSH）。
+
+**替换之后**（v0.5.4 起）：
+
+- 选中那版会走**原型上的原生 setter** + 派发 `input`（React 受控输入才认账）；
+- 气泡换成一瞬的「已换好」提示（6 秒自收），并注明这版**跑了多少 token、想了多久**；
+- **不再有撤销**：原文不留在界面上（没有右键撤销、没有恢复入口）。想保留原文就用
+  每行的**复制**先搬走——那正是它的用途。
+- 少数情况下编辑器下一帧会把内容回滚（富文本编辑器常见），替换后会**复核一次**：
+  120 ms 后重读文本框，跟目标正文比对，对不上就降级成 paste 态让你手动搬。
 
 **配置**：`$DSH_HOME/peak-whale/settings.json`（首次启动自动创建；**保存即生效，不用重启**
 ——每次拖拽都会重新读一遍文件）。
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `deepseekApiKey` | `""` | **你**的 DeepSeek API key。留空时拖一次会得到「把 key 填进 …」的提示 |
-| `model` | `deepseek-v4-pro` | 与本插件价格表同一档 |
-| `reasoningEffort` | `max` | 留空即不发这个字段（有的账户不认它；400 报错里会直接告诉你改哪儿） |
-| `baseUrl` | `https://api.deepseek.com` | |
-| `timeoutMs` | `120000` | max 思考就是慢；到点**必然**返回（内部另有一道不依赖 `abort()` 的兜底超时） |
+| `webToken` | `""` | **网页端登录态**（`chat.deepseek.com` localStorage 里的 `userToken`）。填了它就走网页端方案，`deepseekApiKey` 可以不管 |
+| `deepseekApiKey` | `""` | **你**的 DeepSeek API key。`webToken` 为空时才用它；两者都空会得到「先填一个」的提示 |
+| `model` | `deepseek-v4-pro` | 与本插件价格表同一档（仅 API key 路径用） |
+| `reasoningEffort` | `max` | 留空即不发这个字段（仅 API key 路径用） |
+| `baseUrl` | `https://api.deepseek.com` | 仅 API key 路径用 |
+| `timeoutMs` | `120000` | 到点**必然**返回（内部另有一道不依赖 `abort()` 的兜底超时） |
 | `maxInputChars` | `12000` | 超长直接拒绝，不白花钱 |
+| `keepWebSessions` | `false` | 仅网页端路径。**默认用完即删**：每次优化在网页端建 3 条会话，拿完正文就调 `/api/v0/chat_session/delete` 删掉，不在你的 `chat.deepseek.com` 侧栏留垃圾。设 `true` 则保留（回看 / 续聊用） |
 
-兜底：环境变量 `DEEPSEEK_API_KEY`（文件优先）。key 只在 Host 进程里读——
+**怎么拿 `webToken`**：登录 `chat.deepseek.com` → F12 → **控制台** →
+`copy(JSON.parse(localStorage.getItem('userToken')).value)` → 直接 Ctrl+V 粘进 settings。
+（整串 `{"value":"…"}` 粘进来也行，`readSettings` 会自动剥掉 appKit 的包装；
+不剥的话会被当 Bearer 发出，换来一句费解的 `40003 Authorization Failed`。）
+（Chrome 会拦控制台粘贴，在输入框手动打 `允许粘贴` 回车即可；或者去
+「应用 → 本地存储空间 → chat.deepseek.com」里直接看。）
+> `userToken` 会随**退出登录 / 改密 / 长期不用**而失效；失效表现是优化弹「网页端拒绝」
+> 或 40003，重新按上面取一次填回即可，**不用重启**（每次请求都重读 settings）。
+
+兜底：环境变量 `DEEPSEEK_API_KEY`（文件优先）。key/token 只在 Host 进程里读——
 **不进插件代码、不进日志、不进浏览器 bundle**。
 
-> ⚠️ **这次调用走的是你自己的 DeepSeek API 账户**，按 token 计费，与侧栏那条
+> ⚠️ **API key 路径走的是你自己的 DeepSeek API 账户**，按 token 计费，与侧栏那条
 > 「今日费用」**无关**（账本只折算会话日志里 provider 报告的用量，
-> Host 自己发的请求不在其中）。同一段原文 **5 分钟内不重复扣费**。
+> Host 自己发的请求不在其中）。同一段原文 **5 分钟内不重复扣费**
+> （缓存键包含 model / reasoningEffort / baseUrl / 系统提示词——**换了配置立即失效**，
+> 不会拿旧模型的结果糊弄你）；HTTP 429 限流会**自动重试一次**（限流请求未计费）。
+>
+> **网页端路径**实测每轮三版约 **3.3–4.2 秒**，不走 API 缓存（每次都真打），
+> 且受 DeepSeek 网页端**账号级限流**约束（见「已知边界」）。
 
 #### 台词与气泡
 
@@ -427,10 +515,17 @@ Copy-Item src "$dest\src" -Recurse -Force
 ## 四、开发
 
 ```
-src/peak.js               ★ 定价逻辑唯一事实来源（Host 直接 import）
-                            也提供 costUsd / formatMoney / formatTokens 等两端共用的口径
-src/wallet.js             ★ 当日用量账本（Host 专用）：折算 session/event、按日计价、持久化
+src/peak.js               ★ 定价逻辑唯一事实来源（Host 直接 import，人民币牌价）
+                            也提供 costCny / formatCny / formatCnyAmount / formatMoney
+                            / formatTokens 等两端共用的口径
+src/wallet.js             ★ 当日用量账本（Host 专用，按人民币记）：折算 session/event、按日计价、持久化
 src/optimize.js           ★ 提示词优化器（Host 专用）：settings、请求体、输出收敛、超时与缓存
+                            （三版并行 optimize3 + 每版独立的系统提示词偏向）
+src/webchat.js            ★ 网页端对话调用器（cookie 方案，Host 专用）：建会话 → 取 PoW →
+                            解题 → 打 /api/v0/chat/completion → 解 SSE → 抽正文；
+                            optimize3ViaWebChat 出三版（限 2 并发 + 分类退避重试）
+src/pow-solver.mjs        ★ DeepSeek 网页端 PoW 求解器：加载 sha3_wasm_bg.wasm → wasm_solve
+                            （循环在 WASM 里，照搬不重写；WASM 有本地缓存）
 vendor/                   ★ 上游桌宠运行时（rig.js / figure.js / pet-core.js / model.json
                             + tex/ 25 张部件贴图 + feat/ 25 张五官贴图 + icon.png）
 vendor/pet-runtime.js       由 tools/vendor_pet.mjs 拼成的自包含脚本（构建产物）
@@ -446,8 +541,9 @@ index.js                  Host 半身：/price、/balance、wallet + optimize + 
 
 本地调试闭环（先跑这个，再上真机）：
 
-  node test/run-all.mjs     五套全量：定价 / 账本 / 优化器（假 fetch 不花钱）/ bundle 形态（握手、
-                            三挂载点、气泡状态机、CSS 回归闸门）/ 浏览器核心 parity
+  node test/run-all.mjs     六套全量：定价 / 账本 / 优化器（假 fetch 不花钱）/ 网页端对话
+                            （假 fetch + 假 PoW 求解器：SSE 抽正文、真抓包格式、限流重试）/
+                            bundle 形态（握手、三挂载点、气泡状态机、CSS 回归闸门）/ 浏览器核心 parity
   node tools/strip_preview.mjs   详情浮层（简洁/详细两版）渲染成静态 HTML → 无头截图肉眼验收
   node tools/pet_harness.mjs     client.js 在极简 React 垫片里冒烟
   node tools/verify_live.mjs     真机一键验收：wallet/settings 路由、uiMode 往返、开关拦截、
@@ -578,14 +674,13 @@ data URI 贴图能否喂进 WebGL、画布能不能显示、命中区是否每�
 验证图：`assets/pet-harness-typing.png`（她已经站在框外，右下那个红框就是「输入框」）。
 
 **优化链路也在真实浏览器里跑**（harness 把 `/api/optimize` mock 掉，不联网、不花钱）：
-把原文填进文本框 → 用真实 `PointerEvent` 把她从屏幕另一头拖上去 → 松手 →
-断言「文本框被换成优化结果 + `pill=done undo=true`」→ 调 `undoOptimize()` →
-断言「原稿一字不差写回、撤销态清空」→ 再逐帧等她**主动走出文本框区域**。
+把原文填进文本框 → 用真实 `PointerEvent` 把她从屏幕另一头拖上去 → 松手 → 逐帧推进
+（这一段的样本输出是 v0.5.4 **之前**的产物，当时还有撤销态）→ 再逐帧等她**主动走出文本框区域**。
 实际输出：
 
 ```
 打字回避: x 807 → 464（117 帧） 已离开文本框区域
-投递: pill=done undo=true 文本=已换
+投递: opt=done undo=true 文本=已换
 撤销: 原稿已写回
 投递后让开: 61 帧, 她 x=455 框 x=658
 气泡: 出现过=true text="撤销了，还是你原来那版～"
@@ -611,7 +706,12 @@ node test/run-all.mjs # 跑全部测试
    金额/token 格式；余额读取器的 TTL 缓存、未登录不打余额接口、服务缺席降级；
    载荷与报告文案；HTTP 路由的 200 / 405 / 序列化失败 500；以及 `apply()` 的整条接线
    （`/price` + `/balance` + wallet 路由 + optimize 路由 + `session/event` 监听，
-   服务全缺时也不抛；没配 key 时优化路由回 200 + 一句能照做的话）。
+   服务全缺时也不抛；没配 key 时优化路由回 200 + 一句照做的话；
+   v0.4.7：optimize 成功载荷透传 `usage`/`unchanged`、坏 usage 收编成数字、
+   新错误码（如 `finish-length`）不被吞成 `failed`）。
+   v0.5.0：**官方人民币牌价逐格钉死**（改价时这一节就是台账）、
+   `costCny` 峰谷合计、`formatCny` / `formatCnyAmount` 的位数与掐零规则、
+   **v1 美元账本被版本闸门丢弃**（不能把错汇率的数当对账继续累加）。
 3. **`optimize.test.mjs`** — 提示词优化器（**全程假 fetch，不联网不花钱**）：
    配置读取（文件优先 / 环境变量兜底 / 坏 JSON 回落）、模板只创建不覆盖、
    请求体（`model` + `reasoning_effort`、留空就不发这个键）、
@@ -619,8 +719,24 @@ node test/run-all.mjs # 跑全部测试
    401/402/404/429/400 的中文翻译（400 提到 reasoning 时顺手给出改哪儿）、
    没配 key / 空文本 / 超长 / 上游失败 / 网络错误 / 模型空返回 / **超时兜底**
    （故意用一个不理会 `signal`、永不 settle 的上游，没有内部 guard 就会把整套测试挂死）、
-   以及**同一段原文 5 分钟内只扣一次费**、并发只打一次上游。
-4. **`bundle.test.mjs`** — 浏览器握手、导出的是插件而非手写 factory、
+   以及**同一段原文 5 分钟内只扣一次费**、并发只打一次上游；
+   v0.4.7 新增：**缓存键含配置**（换 model / reasoningEffort / baseUrl 立即失效，
+   端到端钉了「换模型必须重新打上游」）、**`finish_reason` 截断守卫**
+   （`length` / `content_filter` 拒绝交付，`stop` 与老端点缺字段照常放行）、
+   **429 自动重试一次**（恰好两次、401 不重试、负延迟禁用）、
+   **`usage` 透传**与**缓存命中不带 usage**、**`unchanged` 无改动检测**（含缓存命中也带出）、
+   以及 SYSTEM_PROMPT v2 的关键约束逐条在场。
+4. **`webchat.test.mjs`** — 网页端对话调用器（**全程假 fetch + 假 PoW 求解器，不联网**）：
+   完整链路（建会话 → 取 challenge → 解题 → 打 completion → 解 SSE → 抽正文）、
+   **SSE 抽正文**（显式 `APPEND` / `SET`、操作数组、隐式 delta、心跳注释行）、
+   **真实抓包格式**（快照 `fragments[].content` + `response/fragments/-1/content` APPEND +
+   一串裸 `{"v":"…"}` 拼出完整正文，且 `event:title` 的标题**绝不能混进正文**）、
+   `event:hint` 错误识别（`finish_reason:"parallel_chat_limit"` 带出 `finishReason`）、
+   会话 id 在 `data.biz_data.id`（实测形状）、
+   **并发限流**（三版并发峰值 ≤2 且真的用满 2）、**撞限退避重试**最终成功、
+   `optimize3ViaWebChat` 的三版齐发 / 部分失败只返回成功的 / 全挂给 `message`、
+   以及没 token、challenge `biz_code≠0`、completion HTTP 错这三条错误路径。
+5. **`bundle.test.mjs`** — 浏览器握手、导出的是插件而非手写 factory、
    两个挂载点注册正确、样式注入一次、两种状态下价格条都能渲染且文案正确；
    **账户钱包**（默认无数据时不显示第二行、注入载荷后第二行与账户卡片都渲染出余额与当日费用、
    窄轨态一个字都不显示、未登录/取不到的文案、测试桩没有 `location` 时绝不发请求）；
@@ -632,12 +748,15 @@ node test/run-all.mjs # 跑全部测试
    **打字回避**（哪些元素算文本框、回避区怎么外扩、不挡路不动 / 挡路必落在框外、
    就近选边、窗口太窄不硬挤、「正在打字」的宽限与焦点判定、
    以及监听器**挂载即记账、卸载必摘除**）；
-   **优化胶囊**（成功态渲染 + 点撤销把原稿写回并清态、失败态整句原因 + 「知道了」、
-   右键菜单里的撤销入口也能写回；投递区判定 ±16px、读写文本框必须派发 `input`、
-   用户改过字就自动失效）；
+   **优化胶囊**（选版气泡：三行「替换 / 复制」+「不优化」+「关闭」+ 每行思考时间，
+   替换写回并换 info、失败态整句原因 + 「知道了」；投递区判定 ±16px、
+   读写文本框必须派发 `input`）；
+   v0.4.7 新增 **9d 全链路**（假 fetch 驱动 `deliverToComposer` 三个分支：
+   成功写回 + 完成句带 `约 450 tokens` 注脚、**无改动**不写回/不留撤销/`info` 态 6 秒自收、
+   失败原样透传原因）+ `usageNote` 纯函数 + 源码级钉死（`kind:'info'` 分支与专属 CSS 在场）；
    右键菜单的六项文案、逐个点击都不崩、点空白关闭；
    以及三条关键 CSS 断言（命中区 / 菜单 / 优化胶囊都必须显式 `pointer-events:auto`）。
-5. **`parity.test.mjs`** — 逐点比对「浏览器内联核心」与 `src/peak.js`
+6. **`parity.test.mjs`** — 逐点比对「浏览器内联核心」与 `src/peak.js`
    （国庆前后 10 天每 7 分钟、整年每 6 小时、节假日整年逐日）。
 
 > 为了能断言**行为结果**（而不只是"没抛错"），`test/helpers.mjs` 里的 React 桩
@@ -655,19 +774,23 @@ node test/run-all.mjs # 跑全部测试
 
 - **价格是硬编码的**。官方调价后需改 `src/peak.js` 的 `MODELS` 与 `PRICING_AS_OF`
   并重新构建。插件不联网抓价，因此不会因为网络问题显示错价，但也**不会自动跟进调价**。
-- **节假日表只到 2026 年**。跨年后必须更新 `HOLIDAYS`，否则元旦至春节前会把假期误判为
-  高峰日。改动处已注释标注。
+- **计价币种固定为人民币**。用的是官方**中文**定价页的牌价，不做汇率换算
+  （官方中英两页是两套独立牌价，换汇会引入无法自证的误差）。若你的账户实际以美元结算，
+  余额行仍会照接口给的币种显示 `$`，但**「今日费用」始终是人民币**——两者不会自动换算。
+  v0.5.0 起账本字段为 `cny`；从 0.4.x 升级会**丢弃当天的旧估算**（旧账按倒推汇率记的 `usd`，
+  口径不对，宁可少算）。
+- **节假日表已覆盖至 2027 年**。2027 年条目按农历推算，待国务院办公厅 `HOLIDAYS`，否则元旦至春节前会把假期误判为
+  通知公布后需核对更新（改动处已注释标注）。
 - 判定使用**北京时间**（固定 UTC+8，中国自 1991 年起无夏令时），与本机时区无关。
 - 峰的判定以「周一到周五 且 非法定节假日 且在两个 UTC 窗口内」为准；
   官方未对「调休上班的周末」单独说明，本插件按官方「周末整天算谷时」的字面处理。
 - **她会在窗口底部到处走，可能挡住一小块界面**。挡住的范围就是她的身体
   （约 148×145 px），拖走或者等她走开即可；除此之外整层点击穿透。
-- **`client.js` 约 1.8MB**，其中 1.6MB 是 50 张贴图的 base64。这是"零外部依赖"的代价：
+- **`client.js` 约 775KB**（v0.6.0 起贴图改用 WebP，从 1.8MB 降到 775KB）。这是"零外部依赖"的代价：
   不引 ESM、不起本地服务器、不读文件系统，全部内联。
-- **只带了默认配色（DeepSeek 原版蓝）**。上游还有 8 套厂商配色（Harness 纯黑、ChatGPT、
-  Claude、Gemini、千问、Kimi、MiniMax），要换配色需要把对应 `vendor/schemes/<id>/` 的
-  贴图也内联进来（会在 `PET_TEX` 里再加约 1.2MB）。上游的 `figure.setScheme()` 本身可用，
-  只是插件没做切换入口。
+- **配色可在设置页切换**（v0.6.0 新增）：内置 7 套配色
+  （mint 薄荷绿 / mono 单色 / navigator 导航蓝 / claude 暖橙 / fox 狐红 / purple 紫 / lemon 柠檬黄），
+  切换实际改的是特效主色（竖耳弧 / 思考气泡 / 睡 z 的强调色）。
 - **今日费用只统计本插件加载之后**发生的请求，装上插件那天的前半段不补账。
   DSH 不在跑就不会产生用量，所以此后每个自然日都是完整的；账本按天落盘，**重启不清零**。
 - **只统计 DeepSeek 路由**（`resolveModel` 判不出型号的直接不入账）：别的厂商不走 DeepSeek
@@ -681,17 +804,39 @@ node test/run-all.mjs # 跑全部测试
 - **账本落在 `$DSH_HOME/peak-whale/wallet.<profile>.json`**（按 profile 分文件，
   免得桌面与 web 两个进程互相覆盖）。写盘失败只告警一次，当日费用继续在内存里跑；
   文件损坏会留一份 `.corrupt-<时间戳>` 备份再从空账继续。
-- **提示词优化用的是你自己的 API key**，走 DeepSeek 的 `/chat/completions`，
-  **按 token 计费**，因此**不计入侧栏的「今日费用」**（账本只折算会话日志）。
-  key 放在 `$DSH_HOME/peak-whale/settings.json`（或环境变量 `DEEPSEEK_API_KEY`），
-  只在 Host 进程里读——不进插件代码、不进日志、不进浏览器 bundle。
+- **提示词优化有两条后端**（`settings.json` 的 `webToken` 决定走哪条）：
+  - **API key 路径**（`webToken` 为空）：走 DeepSeek 的 `/chat/completions`，
+    **按 token 计费**，因此**不计入侧栏的「今日费用」**（账本只折算会话日志）。
+    key 放在 `$DSH_HOME/peak-whale/settings.json`（或环境变量 `DEEPSEEK_API_KEY`），
+    只在 Host 进程里读——不进插件代码、不进日志、不进浏览器 bundle。
+  - **网页端路径**（`webToken` 非空）：**不走 API 计费**，用你的网页端额度。
+    token 同样只在 Host 进程里读，同样不进代码/日志/浏览器 bundle。
+    **用完即删**：每轮优化建的 3 条网页端会话在拿完正文后会被
+    `/api/v0/chat_session/delete` 删掉，不会堆在你的侧栏里；删除失败只记日志，
+    **绝不影响已拿到的答案**。想留着回看就把 `keepWebSessions` 设成 `true`。
+- **⚠️ 网页端路径是逆向出来的，会随 DeepSeek 发版失效**（这是它最大的风险，请知悉）：
+  - **PoW 求解器**要下 `sha3_wasm_bg.<hash>.wasm`，**hash 每次发版都变**
+    （当前硬编码 `7b9ca65ddd`，对应 bundle commit `4955e097`）。改版后要么下载 404，
+    要么解题被拒——需要重新抓包拿新 URL。
+  - **SSE 事件结构、请求体字段名、接口路径**同样可能变。当前实现已按实测格式写死，
+    变了解析器就抽不出正文（会回一句「网页端没返回正文」而不是乱写）。
+  - **账号级限流**：实测同账号**最多 2 路并发对话**（`finish_reason:"parallel_chat_limit"`），
+    连续快速请求还会撞 `Messages too frequent`。插件已做「限 2 并发 + 分类退避重试」，
+    但短时间内反复触发优化仍可能拿到失败提示。
+  - **`webToken` = 完整登录态**，能以你的身份在网页端发消息。它跟 API key 一样只存本地；
+    不想要了就把它从 `settings.json` 删掉（或清空），会自动回落到 API key 路径。
+  - **可能违反 DeepSeek 网页端的服务条款**：网页端是给人用的界面，自动化调用不在其
+    预期内。风险自负；**如果你有 API key，优先用 API key 路径**（那是官方给程序用的）。
+  - **该路径不走 5 分钟缓存**，每次都是真请求；也**不产生 token 用量记录**，
+    所以返回的 `usage` 恒为 `null`（界面上不会显示「约 X tokens」）。
 - **`reasoning_effort: max` 可能不被你的账户接受**（上游回 HTTP 400）。报错里会直说，
   把 `settings.json` 的 `reasoningEffort` 留空即可退回默认思考强度。
   `model` 同理（404 会提示改哪个字段）。
 - **max 思考很慢**：默认超时 120 秒，到点**必然**返回——内部有一道不依赖 `abort()` 的
   兜底计时器，上游再卡也悬不住。同一段原文 **5 分钟内只扣一次费**。
-- **撤销只有一层**（优化前的原稿），而且**你一旦改过文本框内容就自动失效**——
-  绝不会拿旧稿盖掉你的新输入。成功胶囊 30 秒后自收，右键菜单里仍可撤。
+- **选版气泡是对话框语义**：不设消失时间，一直等你挑完才收。只有失败说明（8 秒）
+  与「已换好」提示（6 秒）会自收；**没有撤销**——替换后原文不留在界面上，
+  想留原文就在挑之前点每行的**复制**。
 - **投递判定是文本框矩形 ±16px**：拖到框外（哪怕只差 20px）仍然是**普通抛掷**，
   不会触发优化；判定用的是「聚焦的 → 最近打字的 → 页面上最大的那个文本框」，
   多光标/选区这类复杂编辑器不在支持范围内。

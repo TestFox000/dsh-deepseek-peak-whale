@@ -336,6 +336,7 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     hair: spring(55, 7, 1.8), hairY: spring(50, 8, 1.2), bangs: spring(110, 10, 1.6),
     skirt: spring(100, 9, 1.6), skirtY: spring(90, 10, 1.1), tail: spring(40, 5, 32), fins: spring(90, 9, 30),
     ahoge: spring(140, 6, 38), head: spring(70, 10, 16), armN: spring(60, 9, 95), armF: spring(60, 9, 95),
+    gest: spring(90, 11, 1.4), mood: spring(20, 7, 1),
   };
   let lastT = null, prevTilt = 0, prevLow = 0, headTilt = 0, fx = '';
   // pet-core tips Coo's whole round body to listen, nod, doze or wobble; she keeps her feet on the floor and
@@ -380,6 +381,13 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     const mode = o.mode || 'idle', face = o.face || 'neutral';
     const walking = mode === 'walk' || mode === 'run', held = mode === 'drag', airborne = mode === 'air';
 
+    // pet-core names the gesture and eases how far through it she is; the spring here only smooths the
+    // arrival, so a gesture ending takes the arms back down instead of snapping them to the rest pose
+    const gest = o.gest || '';
+    const gestK = clamp(sp.gest.step(gest ? 1 : 0, dt), 0, 1.2);
+    // the mood the owner sets (how much she has been played with) rides its own slow spring
+    const gestMood = clamp(sp.mood.step(clamp(o.mood ?? 0, 0, 1), dt), 0, 1);
+
     /* body: pet-core's `low` is how far the hips sink (sitting, the walk's bob), in these units */
     sitK = lerp(sitK, clamp(o.sit ?? 0, 0, 1), ease(12, dt));
     const low = o.low || 0;
@@ -412,10 +420,16 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     const flare = sp.skirtY.step(up * .8 + sitK * .6 + clamp(-lowV * .01, -.3, .6), dt);
     const [fm, wg] = MOOD[face] || MOOD.neutral;
     finMood = lerp(finMood, fm, ease(6, dt));
-    wagAmp = lerp(wagAmp, wg, ease(3, dt));
+    // the wag has two sources: how the face reads, and the mood the owner sets (how often you have been
+    // playing with her). they add, so a happy face plus a good mood really does wag hard. asleep damps it.
+    wagAmp = lerp(wagAmp, clamp(wg + gestMood * .55, 0, 1.5) * (mode === 'sleep' ? .15 : 1), ease(3, dt));
     tailMood = lerp(tailMood, mode === 'sleep' || face === 'sad' ? -1 : 0, ease(3, dt));
-    const fins = sp.fins.step(finMood * 14 + sway * 10 + (face === 'angry' ? 3 * Math.sin(t * 40) : 0), dt);
-    const ahoge = sp.ahoge.step(-tiltVel * .12 + sway * 18 + (face === 'surprised' ? -16 : 0) + (mode === 'sleep' ? 22 : 0) - hairY * 12, dt);
+    const fins = sp.fins.step(finMood * 14 + sway * 10 + (face === 'angry' ? 3 * Math.sin(t * 40) : 0)
+      + gestMood * 5 * Math.sin(t * 2.2), dt);
+    // the ahoge is the one thing that shows she is pleased without her having to say anything: the
+    // livelier her mood, the more it flicks about on its own
+    const ahoge = sp.ahoge.step(-tiltVel * .12 + sway * 18 + (face === 'surprised' ? -16 : 0) + (mode === 'sleep' ? 22 : 0) - hairY * 12
+      + gestMood * 9 * Math.sin(t * 3.1), dt);
     const tail = sp.tail.step(sway * 14 + tailMood * 12, dt) + wagAmp * 13 * Math.sin(t * (4 + 5 * wagAmp)) + Math.sin(t * 1.3) * 3;
 
     /* legs: pet-core hands hip→foot segments sized for Coo; keep their angle (forward = foot to the right) */
@@ -433,6 +447,45 @@ export async function createWhaleFigure(base = new URL('./', import.meta.url), o
     if (sitK > .5 && !walking) { aN = lerp(aN, -4, sitK); aF = lerp(aF, -6, sitK); }
     if (face === 'happy' || face === 'love') { aN += 12 + 5 * Math.sin(t * 8); aF -= 8 + 4 * Math.sin(t * 8); }
     if (face === 'angry') { aN = 20 + 3 * Math.sin(t * 30); aF = -18 - 3 * Math.sin(t * 30); }
+
+    // gestures reach with the arms, not just the spine. pet-core drives the body (lean, sit, lift, the
+    // legs) and names the gesture; these are the arm poses that finish it. Each one blends in on a
+    // spring like everything else here, so a gesture that ends mid-pose lets the arms fall back.
+    const gk = gestK, gm = gestMood;
+    if (gk > .001) {
+      switch (gest) {
+        // both arms up and back over the head
+        case 'stretch': aN += 58 * gk; aF -= 50 * gk; break;
+        // one hand shading her eyes, the other pointing where she is looking
+        case 'peek': aN += 30 * gk; aF -= 66 * gk; break;
+        // forelegs flung out and shaking
+        case 'shakeout': aN += 22 * gk * Math.sin(t * 26); aF -= 20 * gk * Math.sin(t * 26 + 1.1); break;
+        // both forepaws up, pawing forward at you
+        case 'beg': aN += 64 * gk + 10 * gk * Math.sin(t * 9); aF -= 58 * gk + 10 * gk * Math.sin(t * 9 + 1); break;
+        // arms wrapped in tight, hugging herself
+        case 'curl': aN -= 16 * gk; aF += 14 * gk; break;
+        // both hands up, covering the face
+        case 'peekaboo': aN += 74 * gk; aF -= 66 * gk; break;
+        // one arm cocked back and swung round
+        case 'swat': aN += 18 * gk + 52 * gk * Math.sin(t * 7); break;
+        // shoulders pumping with the laugh, hands at the belly
+        case 'giggle': aN += 26 * gk + 6 * gk * Math.sin(t * 12); aF -= 22 * gk; break;
+        // arms up and out, guarding the head
+        case 'brace': aN += 46 * gk; aF -= 40 * gk; break;
+        // one hand out, the other folded in front, dipped together
+        case 'curtsy': aN += 34 * gk; aF -= 30 * gk; break;
+        // arms clamped to the sides
+        case 'shiver': aN -= 22 * gk; aF += 20 * gk; break;
+        // reaching forward to push
+        case 'nudge': aN += 56 * gk + 16 * gk * Math.sin(t * 6); break;
+        // hands to the mouth
+        case 'lick': aN += 40 * gk; aF -= 36 * gk; break;
+      }
+    }
+    // a lively mood makes the arms a touch more alive even at rest
+    if (!walking && !held && !airborne) {
+      aN += gestMood * 3 * Math.sin(t * 1.9); aF -= gestMood * 2.4 * Math.sin(t * 1.9 + .8);
+    }
     const armN = sp.armN.step(aN, dt), armF = sp.armF.step(aF, dt);
 
     /* deformer states */

@@ -88,14 +88,15 @@ const ready = {
   nowMs: 0,
   profile: 'desktop',
   account: { status: 'credential-stored', topUpUrl: 'https://platform.deepseek.com/top_up', usageUrl: 'https://platform.deepseek.com/usage' },
+  // 真实账户就是人民币钱包，预览页照着现实取值（v0.5.0 起全面人民币计价）
   balance: {
     status: 'ready',
-    wallets: [{ currency: 'USD', balance: '12.3456' }],
-    bonus: [{ currency: 'USD', balance: '1.0000' }],
+    wallets: [{ currency: 'CNY', balance: '240.98267744' }],
+    bonus: [{ currency: 'CNY', balance: '1.0000' }],
   },
   today: {
     date: '2026-10-05',
-    usd: 0.0042,
+    cny: 4.694929,
     requests: 5,
     tokens: { uncachedInputTokens: 12000, outputTokens: 3400, cacheReadTokens: 800, cacheWriteTokens: 0 },
     isPeak: false,

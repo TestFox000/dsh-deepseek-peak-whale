@@ -11,7 +11,7 @@
  *
  * 输出 pet-runtime.js：
  *   var PET_MODEL = {...}   model.json 原样注入
- *   var PET_TEX   = {...}   50 张 PNG 的 data URI（key 与 figure.js 的 asset() 路径一致）
+ *   var PET_TEX   = {...}   50 张 WebP 的 data URI（key 与 figure.js 的 asset() 路径一致）
  *   var PET       = {createWhaleFigure, createPet, createSfx, MOTIONS, EXPRESSIONS, FACES}
  *
  * 为什么要手工拼而不是留 ESM：
@@ -25,6 +25,7 @@
  * 用法：node tools/vendor_pet.mjs
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -89,14 +90,51 @@ const wanted = [
 ];
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+/** WebP 魔数：RIFF....WEBP（第 0-3 字节 RIFF，第 8-11 字节 WEBP）。 */
+const WEBP_MAGIC = Buffer.from([0x52, 0x49, 0x46, 0x46]);
+const WEBP_BRAND = Buffer.from([0x57, 0x45, 0x42, 0x50]);
+const WEBP_DATA_PREFIX = 'data:image/webp;base64,';
+
+/**
+ * 把一张 PNG 编码成 WebP（quality=85）。
+ * 优先 sharp（本机 `npm install sharp`）；sharp 不可用时退回系统的 cwebp 命令行。
+ * 两者都失败就抛——绝不产出一张「浏览器里静默坏掉」的贴图。
+ */
+async function encodeWebp(buf, key) {
+  const errors = [];
+  try {
+    const sharpMod = await import('sharp');
+    return await sharpMod.default(buf).webp({ quality: 85 }).toBuffer();
+  } catch (error) {
+    errors.push('sharp: ' + (error?.message ?? error));
+  }
+  try {
+    return execFileSync('cwebp', ['-quiet', '-q', '85', '-stdout'], {
+      input: buf,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch (error) {
+    errors.push('cwebp: ' + (error?.message ?? error));
+  }
+  throw new Error('贴图 ' + key + ' 转 WebP 失败 —— ' + errors.join('；'));
+}
+
 const tex = {};
 let bytes = 0;
 for (const key of wanted) {
   const file = join(vendor, key);
-  if (!existsSync(file)) throw new Error(`贴图缺失: ${key}`);
+  if (!existsSync(file)) throw new Error('贴图缺失: ' + key);
   const buf = readFileSync(file);
-  if (!buf.subarray(0, 8).equals(PNG_MAGIC)) throw new Error(`${key} 不是 PNG（魔数不对）`);
-  tex[key] = 'data:image/png;base64,' + buf.toString('base64');
+  // 上游给的源图只认 PNG / WebP；魔数不对就报错，不猜。
+  const isPng = buf.subarray(0, 8).equals(PNG_MAGIC);
+  const isWebp = buf.subarray(0, 4).equals(WEBP_MAGIC) && buf.subarray(8, 12).equals(WEBP_BRAND);
+  if (!isPng && !isWebp) throw new Error(key + ' 既不是 PNG 也不是 WebP（魔数不对）');
+  // 内联前必须转成 WebP：PET_TEX 里的 data URI 一律是 image/webp。
+  const webp = await encodeWebp(buf, key);
+  if (!webp.subarray(0, 4).equals(WEBP_MAGIC) || !webp.subarray(8, 12).equals(WEBP_BRAND)) {
+    throw new Error(key + ' 编码后不是 WebP（魔数不对）');
+  }
+  tex[key] = WEBP_DATA_PREFIX + webp.toString('base64');
   bytes += buf.length;
 }
 // 上游若新增/删除贴图，清单必须跟着动
@@ -127,7 +165,7 @@ ${figure}
   })();
   var core = (function () {
 ${core}
-    return { createPet: createPet, createSfx: createSfx, EXPRESSIONS: EXPRESSIONS, MOTIONS: MOTIONS, FACES: FACES };
+    return { createPet: createPet, createSfx: createSfx, EXPRESSIONS: EXPRESSIONS, MOTIONS: MOTIONS, FACES: FACES, GESTURES: GESTURES };
   })();
   return {
     createWhaleFigure: figure.createWhaleFigure,
@@ -136,6 +174,7 @@ ${core}
     EXPRESSIONS: core.EXPRESSIONS,
     MOTIONS: core.MOTIONS,
     FACES: core.FACES,
+    GESTURES: core.GESTURES,
   };
 })();
 `;
@@ -143,5 +182,5 @@ ${core}
 writeFileSync(outPath, runtime, 'utf8');
 console.log('vendor_pet.mjs: 已生成 ' + outPath);
 console.log(`  模块拼接 : rig ${(rig.length / 1024).toFixed(1)}KB + figure ${(figure.length / 1024).toFixed(1)}KB + pet-core ${(core.length / 1024).toFixed(1)}KB`);
-console.log(`  贴图     : ${wanted.length} 张，原图 ${(bytes / 1024).toFixed(0)}KB → base64 ${(Buffer.byteLength(JSON.stringify(tex)) / 1024).toFixed(0)}KB`);
+console.log(`  贴图     : ${wanted.length} 张，源图 ${(bytes / 1024).toFixed(0)}KB → WebP base64 ${(Buffer.byteLength(JSON.stringify(tex)) / 1024).toFixed(0)}KB`);
 console.log(`  产物大小 : ${(Buffer.byteLength(runtime, 'utf8') / 1024).toFixed(0)}KB`);

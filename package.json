@@ -1,6 +1,6 @@
 {
   "name": "dsh-deepseek-peak-whale",
-  "version": "0.4.6",
+  "version": "0.6.0",
   "private": true,
   "description": "在侧栏显示 DeepSeek 峰谷计价状态与账户钱包：小鲸鱼娘 + 距半价倒计时 + 官方价格表 + 余额与当日费用。",
   "license": "AGPL-3.0-or-later",
@@ -37,12 +37,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OWNER/dsh-deepseek-peak-whale.git"
+    "url": "git+https://github.com/TestFox000/dsh-deepseek-peak-whale.git"
   },
   "bugs": {
-    "url": "https://github.com/OWNER/dsh-deepseek-peak-whale/issues"
+    "url": "https://github.com/TestFox000/dsh-deepseek-peak-whale/issues"
   },
-  "homepage": "https://github.com/OWNER/dsh-deepseek-peak-whale#readme",
+  "homepage": "https://github.com/TestFox000/dsh-deepseek-peak-whale#readme",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -53,5 +53,8 @@
     "off-peak",
     "balance",
     "usage"
-  ]
+  ],
+  "devDependencies": {
+    "sharp": "^0.35.5"
+  }
 }

@@ -186,6 +186,8 @@ window.__ModuleLoader__.load({
 .pw-wallet-sub{color:var(--dsw-alias-label-secondary);font-size:11px;line-height:17px;
   font-variant-numeric:tabular-nums}
 .pw-wallet-links{margin-top:4px;display:flex;gap:10px;font-size:11px;line-height:17px}
+.pw-export-btn{margin-top:6px;padding:3px 10px;border:1px solid var(--dsw-alias-border-subtle);border-radius:4px;background:transparent;color:var(--dsw-alias-text-muted);font-size:11px;cursor:pointer;line-height:16px}
+.pw-export-btn:hover{background:var(--dsw-alias-bg-hover);color:var(--dsw-alias-text-primary)}
 .pw-wallet-note{margin-top:4px;opacity:.7;font-size:11px;line-height:17px}
 
 /* ── 鲸鱼娘桌宠（全屏浮层）────────────────────────────────────
@@ -194,6 +196,13 @@ window.__ModuleLoader__.load({
    #pet 里 figure 会挂一个 <foreignObject> 画布（WebGL2），transform 由物理层设置；
    #shadow 是接地影子；#fx 是爱心 / z / 粒子等特效组。 */
 .pw-roam{position:fixed;inset:0;z-index:1185;pointer-events:none}
+/* petVisible=false 时整层隐身：visibility 保留布局（getBoundingClientRect
+   仍有效，rAF 循环不用停），只是看不见也点不到 */
+.pw-roam.is-hidden{visibility:hidden!important}
+/* 拖拽时靠近输入框：给鲸鱼身体一圈主色辉光，提示「再近一点就能投递」。
+   只挂在 .pw-roam 这一层（身体、影子都在它下面），松手时 class 被摘掉即消失。 */
+.pw-roam.is-near-composer .pw-stage{filter:drop-shadow(0 0 8px var(--dsw-alias-brand-primary))}
+.pw-roam.is-near-composer .pw-hitbox{box-shadow:0 0 14px 4px var(--dsw-alias-brand-primary);border-radius:50%}
 .pw-stage{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
 .pw-hitbox{position:absolute;left:0;top:0;width:0;height:0;
   pointer-events:auto;cursor:grab;background:transparent;border:0;padding:0}
@@ -215,8 +224,10 @@ window.__ModuleLoader__.load({
 .pw-menu-note{padding:6px 10px 4px;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:15px}
 @keyframes pw-menu-in{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
 
-/* ── 优化气泡 / 撤销对话框：挂在小鲸鱼头顶（位置由 anchor 每帧写入） ─────────
-   三种态：busy 优化中（无按钮）/ done 询问撤销（√/×，不设时限）/ error 原因（知道了）。
+/* ── 优化气泡：挂在小鲸鱼头顶（位置由 anchor 每帧写入） ─────────────────────
+   五种态：busy 优化中（无按钮）/ pick 三版三行（整行替换 / 行内只复制 / 底部
+   不优化 + 关闭，对话框语义，不设时限，等你选）/ paste 写不进去时摊正文
+   + 复制 / 关闭 / info 已换好（纯文本，6 秒自收）/ error 原因（知道了，8 秒自收）。
    和右键菜单同一个坑：父层 .pw-roam 是 pointer-events:none，
    不显式写 auto 就是「看得见点不动」。 */
 .pw-opt{position:absolute;left:0;top:0;transform:translate(-50%,-100%);margin-top:-6px;
@@ -229,17 +240,62 @@ window.__ModuleLoader__.load({
 .pw-opt:after{content:'';position:absolute;left:50%;top:100%;margin-left:-4px;
   border:4px solid transparent;border-top-color:var(--dsw-alias-bg-overlay)}
 .pw-opt[data-kind="busy"]{color:var(--dsw-alias-label-secondary)}
+.pw-opt[data-kind="info"]{border-color:var(--dsw-alias-state-success-primary)}
 .pw-opt[data-kind="error"]{border-color:var(--dsw-alias-state-error-primary)}
 .pw-opt[data-kind="error"] .pw-opt-text{white-space:normal}
 .pw-opt-ask{display:flex;flex-direction:column;gap:2px;color:var(--dsw-alias-label-primary)}
-.pw-opt-actions{display:flex;gap:8px}
+.pw-opt-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;width:100%}
+.pw-opt-paste-note{flex:1;font-size:11px;color:var(--dsw-alias-label-secondary)}
+/* 底部动作行里的「关闭」：从列底右对齐改成行内居中，别掉到行底去 */
+.pw-opt-actions .pw-opt-close{align-self:center}
+/* 「还是不优化了吧」：左占满、右「关闭」——一个表态一个收摊，同一个动作两种语气 */
+.pw-opt-pick-skip{flex:1;min-width:0;text-align:left;background:transparent;border:0;
+  padding:4px 0;font-weight:500;color:var(--dsw-alias-label-secondary)}
+.pw-opt-pick-skip:hover{color:var(--dsw-alias-label-primary);filter:none}
 .pw-opt button{flex:none;border:0;border-radius:999px;padding:4px 12px;cursor:pointer;
   font:inherit;font-weight:600}
-.pw-opt button.pw-opt-yes{background:var(--dsw-alias-brand-primary);color:#fff}
-.pw-opt button.pw-opt-no{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
+/* v0.5.4：√撤销 / ×保留 两个按钮的样式删掉了。
+   撤销询问整个取消后，已经没有任何元素带那两个 class，留着就是没人能验的死 CSS ——
+   而且日后有人看到它很容易以为"撤销功能还在"，顺手把 UI 接回去。
+   .pw-opt-close 还在用（失败态的「知道了」），所以保留。 */
 .pw-opt button.pw-opt-close{background:transparent;color:var(--dsw-alias-label-secondary);
   font-weight:500;padding:4px 6px;align-self:flex-end}
 .pw-opt button:hover{filter:brightness(1.08)}
+.pw-opt[data-kind="pick"]{max-width:min(320px,calc(100vw - 24px));gap:8px}
+.pw-opt-pick{display:flex;flex-direction:column;gap:6px;width:100%}
+/* 一行 = 一版：整行是「替换」（点哪都写回框里），右边那个小按钮是「只复制」 */
+.pw-opt-pick-row{display:flex;align-items:stretch;gap:6px}
+.pw-opt-pick-btn{display:flex;flex:1;min-width:0;align-items:center;justify-content:space-between;gap:8px;
+  border:1px solid var(--dsw-alias-border-l2);border-radius:10px;
+  padding:7px 10px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);
+  font-weight:600;text-align:left;cursor:pointer}
+.pw-opt-pick-btn:hover{border-color:var(--dsw-alias-brand-primary);filter:none}
+.pw-opt-pick-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pw-opt-pick-note{font-size:11px;font-weight:500;color:var(--dsw-alias-label-secondary)}
+/* 动作词：整行可点不等于看得出在干什么，「替换」两个字得摆出来 */
+.pw-opt-pick-act{flex:none;font-size:11px;font-weight:600;color:var(--dsw-alias-brand-primary)}
+.pw-opt-pick-copy{flex:none;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;
+  padding:0 10px;cursor:pointer;font:inherit;font-size:11px;font-weight:600;
+  background:transparent;color:var(--dsw-alias-label-secondary)}
+.pw-opt-pick-copy:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary);filter:none}
+/* 字数 / 耗时的注脚：抓没抓好、这一版想了几秒，一眼看得见（原来只有三个标签，
+   正文是空是残、这版到底跑没跑上游，全都看不出来） */
+.pw-opt-pick-len,.pw-opt-pick-ms{flex:none;font-size:11px;font-weight:500;
+  color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
+/* 「看正文」折叠区：正文被截断/被代码块包住/混进标题，当场就能发现 */
+.pw-opt-preview{width:100%;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.pw-opt-preview>summary{cursor:pointer;user-select:none;padding:2px 0;opacity:.85}
+.pw-opt-preview>summary:hover{color:var(--dsw-alias-label-primary);filter:none}
+.pw-opt-preview-item{margin-top:6px;padding-top:6px;border-top:1px solid var(--dsw-alias-border-l1)}
+.pw-opt-preview-label{font-weight:600;margin-bottom:2px;color:var(--dsw-alias-label-primary)}
+.pw-opt-preview-body,.pw-opt-paste-body{margin:0;padding:6px 8px;max-height:180px;overflow:auto;
+  border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;
+  line-height:1.5;white-space:pre-wrap;word-break:break-word;user-select:text}
+.pw-opt[data-kind="paste"]{max-width:min(380px,calc(100vw - 24px));gap:8px}
+.pw-opt-copy{flex:none;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;
+  padding:4px 14px;cursor:pointer;font:inherit;font-size:12px;font-weight:600;
+  background:var(--dsw-alias-brand-primary);color:#fff}
 
 /* ── 详情浮层：分节标题与底部动作 ──────────────────────────────────────── */
 /* 模式切换只在「设置 → 插件 → 小鲸鱼」里改，浮层顶部不再摆开关（v0.4.0 起）。 */
@@ -260,6 +316,11 @@ window.__ModuleLoader__.load({
   background:color-mix(in srgb, var(--dsw-alias-bg-layer-1) 72%, transparent);
   color:var(--dsw-alias-label-primary)}
 .pw-set-btn:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
+.pw-usage-btn{border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:4px 14px;
+  cursor:pointer;font:inherit;font-size:12px;font-weight:500;line-height:18px;
+  background:color-mix(in srgb, var(--dsw-alias-bg-layer-1) 72%, transparent);
+  color:var(--dsw-alias-label-primary)}
+.pw-usage-btn:hover{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
 
 /* ── 设置页（设置 → 插件 → 小鲸鱼） ─────────────────────────────────────── */
 .pw-settings{max-width:640px;display:flex;flex-direction:column;gap:16px;padding:4px 0 16px}
@@ -275,6 +336,15 @@ window.__ModuleLoader__.load({
 .pw-set-mode-name{font-weight:600;min-width:56px}
 .pw-set-mode-note{color:var(--dsw-alias-label-secondary);font-size:12px}
 .pw-set-switch{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px}
+.pw-set-field{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
+.pw-set-label{color:var(--dsw-alias-label-secondary);font-size:12px;white-space:nowrap}
+.pw-set-value{font-weight:600;font-variant-numeric:tabular-nums;font-size:12px;text-align:right}
+.pw-set-range{flex:1 1 auto;min-width:0;accent-color:var(--dsw-alias-brand-primary);cursor:pointer}
+.pw-set-select{flex:1 1 auto;min-width:0;max-width:240px;padding:5px 8px;
+  border:1px solid var(--dsw-alias-border-l2);border-radius:8px;
+  background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);
+  font:inherit;font-size:13px;cursor:pointer}
+.pw-set-select:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
 .pw-set-help{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;
   color:var(--dsw-alias-label-secondary);font-size:12px;line-height:17px}
 .pw-set-state{color:var(--dsw-alias-label-secondary);font-size:12px;margin:0}
@@ -317,7 +387,15 @@ window.__ModuleLoader__.load({
 
     /**
      * 鲸鱼娘会说的话（纯函数，便于测试）。
-     * @returns {{ price: string[], idle: string[], greet: string[] }}
+     *
+     * ★ 她的性格照着「纸鸢」塑的：甜美、温柔、内敛冷静，说话短、直、具体，
+     *   不装乖也不讨好；被夸会嘴上顶回来，被冷落会小声抱怨，能顶嘴也能干活。
+     *   所以台词里**不许**出现客服腔、俏皮卖萌腔、"主人～"这类称呼，
+     *   也不许长篇大论——她说话跟真人闲聊一样，一句就够。
+     *
+     * @returns {{ price: string[], idle: string[], greet: string[], care: string[],
+     *            sit: string[], rise: string[], sitIdle: string[],
+     *            gesture: object, react: object }}
      */
     function roamLines(date) {
       var t = date === undefined ? new Date() : date;
@@ -326,22 +404,70 @@ window.__ModuleLoader__.load({
         var s = summary(t);
         if (!s.isPeak) {
           if (s.isHoliday && s.holiday) {
-            price = ['今天' + s.holiday.name + '假期，半价哦～', '假期全天半价，随便用！', '放假的 token 是打折的～'];
+            price = ['今天' + s.holiday.name + '，半价哦', '假期打折，随便用', '这会儿便宜，放心跑'];
           } else if (s.isWeekend) {
-            price = ['周末半价，别客气～', '周末的 token 打折啦', '现在便宜一半，冲！'];
+            price = ['周末半价，别客气', '周末打折啦', '现在便宜一半，冲'];
           } else {
-            price = ['现在是谷时，便宜一半～', '半价时段，放心跑吧', '趁便宜多干点活！', '谷时半价，谁用谁知道'];
+            price = ['谷时，便宜一半', '这会儿便宜，跑吧', '趁便宜多干点活', '半价时段，够你造的'];
           }
         } else {
-          price = ['全价时段…省着点花', '现在是峰时，token 贵一倍', '要不…等半价再跑？', '哼，峰时也不许浪费'];
+          price = ['峰时…省着点', '现在全价，贵一倍', '要不等半价再跑', '哼，峰时也不许浪费'];
         }
       } catch (error) {
-        price = ['鲸鱼娘在看着你的 token 呢'];
+        price = ['我在看着你的 token 呢'];
       }
       return {
         price: price,
-        idle: ['摸鱼中…', '呼…好困', '主人好久没理我了', '在原地转个圈～', 'zzz…', '发呆中…'],
-        greet: ['我出来啦～', '巡场中…', '我来看看谁在烧 token', '巡逻！'],
+        // 待机闲话。重复了「摸鱼中…」和「发呆…」是有意的：v0.5.3 把菜单里的
+        // 「说句价格」删掉后，闲话的分母变大了，得靠重复把重复感压下去 ——
+        // 同一个池子里 7 选 1 和 9 选 1，撞车频率差一大截。
+        idle: ['摸鱼中…', '有点困', '好久没理我了', '转个圈～', 'zzz…', '发呆…', '你忙你的，我就待会儿', '摸鱼中…', '发呆…'],
+        greet: ['我出来啦～', '巡场中…', '来看看你烧了多少 token', '巡逻！', '在的在的', '嗯，我看着呢'],
+        // 「陪你说句话」用的：不谈 token，只关心人。短、具体、不说教。
+        care: [
+          '你还好吗',
+          '别硬撑着，累了就歇会儿',
+          '喝口水去，别一直坐着',
+          '你今天吃饭了没',
+          '我觉得你最近挺累的',
+          '有事说一声，我一直在',
+          '我不催你，慢慢来',
+          '你不用一直很强，真的',
+          '别对自己那么狠',
+          '我在呢，哪儿也不去',
+        ],
+        // 「坐好」/「起来」用的：短、认命、带点小脾气。照 Minecraft 里那条
+        // /sit 命令的口吻塑的 —— 你下令，她服从，但会顶一句。
+        sit: ['坐好了，不动', '嗯，坐着', '坐着呢，跑不了', '好，我不动', '待这儿了', '不乱跑了，放心'],
+        rise: ['好嘛，起来就起来', '活动活动筋骨', '那我撒欢儿啦', '自由！', '别后悔把我放出来'],
+        sitIdle: ['我就这么坐着', '不急，你忙你的', '嗯…挺好的', '看着你呢', '不吵你', '累了就靠会儿'],
+        // 「逗她玩」时她说的。照纸鸢塑：短、具体、可以顶嘴、不卖萌不装乖。
+        // 台词必须和动作对得上 —— 说"抖抖毛"的那句不能配一个捂脸的动作。
+        gesture: {
+          stretch: ['唔——伸个懒腰', '嗯，舒展一下', '骨头都要酥了'],
+          peek: ['让我看看…', '那边有啥', '踮个脚'],
+          shakeout: ['抖抖毛', '甩干净了', '别靠近，我在抖'],
+          beg: ['要抱抱…不给你', '想要点什么', '看我看我'],
+          curl: ['不想动', '缩一会儿', '窝着舒服'],
+          peekaboo: ['别看', '没看见没看见', '…别笑'],
+          swat: ['拍你哦', '尾巴不是给你玩的', '哼'],
+          giggle: ['哈哈哈', '笑死我了', '别问，问就是好玩'],
+          brace: ['要摔就摔吧', '我准备好了', '别晃我'],
+          curtsy: ['行了个礼', '这样行了吧', '讲究吧你'],
+          shiver: ['冷…', '抖一下', '别丢下我一个人太久'],
+          nudge: ['推推你', '醒醒', '在忙吗'],
+          lick: ['有点饿', '馋了', '你手上是啥'],
+        },
+        // 她自己看场景有反应时说的。
+        react: {
+          back: ['你回来啦', '诶，你还在', '我以为你不回来了'],
+          typing: ['你打了好久', '歇会儿？', '我看着呢'],
+          idle: ['好安静', '在吗', '你好久没理我了'],
+          done: ['好了！', '搞定', '写好了'],
+          wake: ['醒了', '唔…几点了', '你还在啊'],
+          // 「坐好」10 分钟没人管就自动解除 —— 这不是你的指令，是她自己待不住了
+          rise: ['坐太久了我腿麻', '我自己活动活动', '坐了这么久，腿都不听使唤了'],
+        },
       };
     }
 
@@ -461,6 +587,18 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 两个矩形之间的最近距离（相交时为 0）。
+     * 拖拽反馈用它算「她离输入框还有多远」——只看 x 会漏掉上下方向，
+     * 而用户拖动时最常发生的就是「在框的正上方/正下方」。
+     */
+    function rectDistance(a, b) {
+      if (!a || !b) return Infinity;
+      const dx = Math.max(0, Math.max(a.left - b.right, b.left - a.right));
+      const dy = Math.max(0, Math.max(a.top - b.bottom, b.top - a.bottom));
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    /**
      * 挡路时该走到哪个 x：文本框**外侧最近**的一边，并保证真的落在框外。
      *
      * 两侧都塞不下（窗口太窄 / 她太宽）时返回 null —— 与其在框里来回蹭，
@@ -471,17 +609,25 @@ window.__ModuleLoader__.load({
      * @param {number} width - 舞台宽度（= 视口宽度）。
      * @returns {number|null} 目标 x；不挡路或无处可去时为 null。
      */
-    function escapeTargetX(petRect, zone, width) {
+    function escapeTargetX(petRect, zone, width, petX) {
       const half = Math.max(1, (petRect.right - petRect.left) / 2);
+      // 精灵随 pet.x 刚性平移，但它的中心不一定落在 pet.x 上（VIEW 不对称时
+      // 会偏）。DOM 包围盒只给出当前跨度，不告诉你偏了多少 —— 不修正这个
+      // 偏移，右侧目标会算近：她走到位身体仍压着框，下一帧又算出同一个
+      // 目标，她就被钉在框边"走不动"。petX 是当前 pet.x，用来算偏移。
+      const offset = typeof petX === 'number' && Number.isFinite(petX)
+        ? (petRect.left + petRect.right) / 2 - petX
+        : 0;
       const center = (petRect.left + petRect.right) / 2;
       const lo = half + AVOID_EDGE;
       const hi = width - half - AVOID_EDGE;
       if (!(hi > lo)) return null;
       const clampX = (x) => (x < lo ? lo : x > hi ? hi : x);
       // 必须留出 AVOID_CLEARANCE：走姿会让包围盒晃动，「刚好贴边」= 到位时又压回去
-      const clear = (x) => x + half + AVOID_CLEARANCE <= zone.left
-        || x - half - AVOID_CLEARANCE >= zone.right;
-      const options = [zone.left - half - AVOID_CLEARANCE, zone.right + half + AVOID_CLEARANCE]
+      // 精灵在 pet.x = x 时的实际跨度 = [x + offset - half, x + offset + half]
+      const clear = (x) => x + offset + half + AVOID_CLEARANCE <= zone.left
+        || x + offset - half - AVOID_CLEARANCE >= zone.right;
+      const options = [zone.left - half - AVOID_CLEARANCE - offset, zone.right + half + AVOID_CLEARANCE - offset]
         .map(clampX)
         .filter(clear)
         .sort((a, b) => Math.abs(a - center) - Math.abs(b - center));
@@ -496,19 +642,26 @@ window.__ModuleLoader__.load({
      * @param {number} width - 舞台宽度。
      * @returns {number|null} 需要前往的 x。
      */
-    function escapePlan(petRect, zone, width) {
+    function escapePlan(petRect, zone, width, petX) {
       if (!petRect || !zone) return null;
       if (!rectsOverlap(petRect, zone, 0)) return null;
-      return escapeTargetX(petRect, zone, width);
+      return escapeTargetX(petRect, zone, width, petX);
     }
 
     // ============================================================================
-    //  提示词优化：把她拖到文本框上 → 换一版更好的提示词，不满意还能撤销
+    //  提示词优化：把她拖到文本框上 → 一次回三版，挑一版替换进框里（也可只复制）
     // ============================================================================
     /** Host 侧的优化路由（POST `{text}`）。key 只待在 Host，永远不进这个 bundle。 */
     var OPTIMIZE_ROUTE = '/dsh-deepseek-peak-whale/api/optimize';
+    /** 三版优化路由：一次回三版（更详细/更专业/AI 自主+建议），界面一版一行。 */
+    var OPTIMIZE3_ROUTE = '/dsh-deepseek-peak-whale/api/optimize3';
     /** 「拖到文本框上」的判定余量 —— 比回避区（40px）小，投递要更笃定一点。 */
     var DROP_PAD = 16;
+    /**
+     * 纵向的"差不多就在框那儿"容差：松手点离框最近那条边这么近以内、且 x 落在框的
+     * 横向范围内，就算投递。理由见 `isDropInside`。
+     */
+    var DROP_SLACK_Y = 90;
     /** 写回后的归一化宽限：编辑器可能自己 trim/规范化，这 800ms 内不算「用户改过」。 */
     var UNDO_GRACE_MS = 800;
 
@@ -530,9 +683,23 @@ window.__ModuleLoader__.load({
     /**
      * 写回文本框正文并派发 `input`。
      *
-     * 两个坑都在这里：
-     * ① React 的受控输入要走**原型上的原生 setter**（`el.value = x` 会被它下一次渲染盖回去）；
-     * ② 必须派发 `input` —— 不派发的话框里看着改了、应用以为你没动，一回车就丢。
+     * 三个坑都在这里，每一个都对应一次真实的事故：
+     *
+     * ① **React 的受控输入**要走**原型上的原生 setter**（`el.value = x` 会被它下一次
+     *    渲染盖回去）。
+     *
+     * ② **contenteditable 不能用 `innerText = value`**（DSH 的输入框就是这种，diag 里
+     *    `tag=DIV` 记的就是它）。富文本编辑器（Lexical / ProseMirror / Slate /
+     *    Quill）都把自己的状态存在内存里，`innerText` 是一次「绕过编辑器直接改 DOM」的
+     *    外部写入 —— 编辑器下一帧 reconciliation 时会认为这段文字是外来的脏数据，
+     *    **当帧或下一帧就回滚成原文**。界面上看起来正好是：气泡说「已换成『更详细』那版」，
+     *    而框里纹丝不动。这不是"写入失败"，是"写成功了又被撤销"。
+     *
+     *    所以对 contenteditable 必须走**编辑器自己的输入管线**：`selectAll` +
+     *    `execCommand('insertText')`（它会触发 `beforeinput:inputType=insertText`，
+     *    所有主流编辑器都监听这个当作用户输入），删不掉的段落再拆成多个节点打进去。
+     *
+     * ③ 必须派发事件 —— 不派发的话框里看着改了、应用以为你没动，一回车就丢。
      *
      * @returns {boolean} 有没有写成功。
      */
@@ -540,40 +707,95 @@ window.__ModuleLoader__.load({
       if (!el || typeof el !== 'object') return false;
       const tag = String(el.tagName || '').toUpperCase();
       const value = String(text === null || text === undefined ? '' : text);
-      try {
-        if (tag === 'TEXTAREA' || tag === 'INPUT') {
-          let proto = null;
-          try {
-            if (typeof window !== 'undefined') {
-              if (tag === 'TEXTAREA' && window.HTMLTextAreaElement) proto = window.HTMLTextAreaElement.prototype;
-              if (tag === 'INPUT' && window.HTMLInputElement) proto = window.HTMLInputElement.prototype;
-            }
-          } catch (error) {
-            proto = null;
-          }
-          const descriptor = proto ? Object.getOwnPropertyDescriptor(proto, 'value') : null;
-          if (descriptor && typeof descriptor.set === 'function') descriptor.set.call(el, value);
-          else el.value = value;
-        } else {
-          el.innerText = value;
-        }
-      } catch (error) {
+      if (tag === 'TEXTAREA' || tag === 'INPUT') {
+        let proto = null;
         try {
-          el.value = value;
-        } catch (error2) {
-          try {
-            el.innerText = value;
-          } catch (error3) {
-            return false;
+          if (typeof window !== 'undefined') {
+            if (tag === 'TEXTAREA' && window.HTMLTextAreaElement) proto = window.HTMLTextAreaElement.prototype;
+            if (tag === 'INPUT' && window.HTMLInputElement) proto = window.HTMLInputElement.prototype;
           }
+        } catch (error) {
+          proto = null;
+        }
+        const descriptor = proto ? Object.getOwnPropertyDescriptor(proto, 'value') : null;
+        if (descriptor && typeof descriptor.set === 'function') descriptor.set.call(el, value);
+        else el.value = value;
+        dispatchInput(el);
+        return true;
+      }
+      // contenteditable（含 DSH 那个 DIV 编辑器）：走编辑器的输入管线
+      return writeEditable(el, value);
+    }
+
+    /** 派发 `input`（有 `InputEvent` 就用带 data 的，它才带 isComposing 这类属性）。 */
+    function dispatchInput(el) {
+      try {
+        if (typeof el.dispatchEvent !== 'function') return;
+        if (typeof InputEvent === 'function') {
+          el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: null }));
+          return;
+        }
+        if (typeof Event === 'function') el.dispatchEvent(new Event('input', { bubbles: true }));
+      } catch (error) { /* 派发不了就当纯 DOM 写入 */ }
+    }
+
+    /**
+     * 往 contenteditable 里写一段多行文本。
+     *
+     * 按段落（空行）拆开，逐段 `execCommand('insertText')`：编辑器收到的是一串
+     * 「用户输入」，而不是一次性塞进去的整块 DOM，所以它会老老实实建自己的节点、
+     * 同步自己的历史栈，撤销键也还在。
+     *
+     * 全选 + insertText 的组合还有个副作用要注意：部分编辑器在 `selectAll` 之后
+     * 不删旧内容、直接把新文本插到选区开头。所以先显式 `delete` 一次。
+     */
+    function writeEditable(el, value) {
+      let doc = null;
+      try {
+        doc = el.ownerDocument || (typeof document !== 'undefined' ? document : null);
+      } catch (error) {
+        doc = null;
+      }
+      if (!doc || typeof doc.execCommand !== 'function') {
+        // 没有 execCommand（jsdom / 老浏览器）：退回 DOM 写入 + 事件，至少别静默失败
+        try {
+          el.textContent = value;
+          dispatchInput(el);
+          return true;
+        } catch (error) {
+          return false;
         }
       }
       try {
-        if (typeof el.dispatchEvent === 'function' && typeof Event === 'function') {
-          el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.focus();
+      } catch (error) { /* 聚焦失败不致命，execCommand 仍可能work */ }
+      const run = (cmd, ui) => {
+        try { return doc.execCommand(cmd, false, ui); } catch (error) { return false; }
+      };
+      run('selectAll');
+      run('delete');
+      const paragraphs = String(value).split('\n');
+      let inserted = false;
+      for (let i = 0; i < paragraphs.length; i += 1) {
+        if (i > 0) run('insertParagraph');
+        const part = paragraphs[i];
+        if (part === '') continue;
+        // 逐行 insertText；execCommand 对长文本可能被截断，截断就补写 remainder
+        inserted = run('insertText', part) || inserted;
+      }
+      // 编辑器把内容弹回去（它不认这次外部输入）时，兜底写 DOM —— 至少看得见。
+      // 顺序刻意反过来：先让编辑器自己处理，只在它没反应时兜底。
+      if (readComposer(el).trim() === '' && value.trim() !== '') {
+        try {
+          el.textContent = value;
+          dispatchInput(el);
+          return true;
+        } catch (error) {
+          /* 落到下面的返回 */
         }
-      } catch (error) { /* 派发不了就当纯 DOM 写入 */ }
-      return true;
+      }
+      dispatchInput(el);
+      return inserted || readComposer(el).trim() !== '';
     }
 
     /** 投递区：文本框本体 ±`DROP_PAD`（视口坐标）。取不到就 null。 */
@@ -602,6 +824,35 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 松手点算不算"投递到文本框上"——比 `pointInRect` 宽容一档。
+     *
+     * 为什么不能只看矩形：DSH 的输入框是 contenteditable，**拿到的
+     * `getBoundingClientRect()` 是整块编辑器面板**（顶到输入区上沿、底部含工具行），
+     * 往往比眼睛看到的"输入框"大一圈；可反过来，编辑器内部的滚动/折叠也会让它
+     * 比看起来**高**。于是"明明松在输入框里"被判成 outside，而且**静默失败** ——
+     * diag 里只有一行 `drop-miss`，界面上一个字的提示都没有（2026-10-12 连撞 5 次）。
+     *
+     * 判据（任一成立即算命中）：
+     *   ① 点落在矩形内 —— 老规矩；
+     *   ② 点的 x 在框的横向范围内，且 y 离框**最近那条边**不超过 `DROP_SLACK_Y`
+     *      —— 覆盖"看着在框里、实际差一点"的绝大多数情况。取最近边而不是中心，
+     *      因为人拖过去的直觉就是"往框那儿放"，不是"往框正中心放"。
+     *
+     * @param {{x:number, y:number}} point - 松手点（视口坐标）。
+     * @param {{left:number, right:number, top:number, bottom:number}|null} zone - `dropZone` 的结果。
+     * @returns {boolean}
+     */
+    function isDropInside(point, zone) {
+      if (!point || !zone) return false;
+      if (pointInRect(point, zone)) return true;
+      if (point.x < zone.left || point.x > zone.right) return false;
+      const dyTop = point.y - zone.top;
+      const dyBottom = point.y - zone.bottom;
+      const nearest = dyTop < 0 ? -dyTop : dyBottom > 0 ? dyBottom : 0;
+      return nearest <= DROP_SLACK_Y;
+    }
+
+    /**
      * 撤销胶囊什么时候该自己收起：写回已过归一化宽限，而框里的内容**不再是
      * 当初优化出来的那版**（你自己改过、或应用换过）——绝不能拿旧稿盖掉你的新输入。
      */
@@ -612,11 +863,79 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 当前上下文（apply 时记下）：sessionRoute 要读会话服务，而 optimizePrompt
+     * 这些发送器是模块级函数，拿不到闭包里的 ctx。
+     */
+    var clientCtx = null;
+
+    /**
+     * 读「当前对话框」的模型选择（provider/model/effort），拖鲸鱼时随请求带给 Host，
+     * Host 就用**和这个对话框完全相同的路由**去优化——不同对话框用不同模型，
+     * 各自的优化也各走各的模型，互不干扰。
+     *
+     * 判定「当前会话」用官方 ui-session 同一条口径：retainInfo(id) 的
+     * retainedBy.mainView > 0（主视图正在展示的会话）。模型选择读
+     * binding.session.projections 的 modelSelection face（next ?? lastUsed），
+     * 与会话提交消息时的数据源完全一致（conversation 的 submissionState 同款读法）。
+     *
+     * 任何一步读不到都返回 null：Host 侧会依次回落 webToken / 全局默认模型 /
+     * 网关配置——这条路是增强，任何失败都不该让拖鲸鱼变砖。
+     */
+    function sessionRoute() {
+      try {
+        var ctx = clientCtx;
+        if (!ctx) return null;
+        var sessions = typeof ctx.get === 'function' ? ctx.get('sessions') : ctx.sessions;
+        if (!sessions || typeof sessions.binding !== 'function') return null;
+        var activeId = null;
+        try {
+          var snap = sessions.list && typeof sessions.list.getSnapshot === 'function'
+            ? sessions.list.getSnapshot() : null;
+          var byId = snap && snap.byId ? snap.byId : null;
+          if (byId) {
+            var ids = Object.keys(byId);
+            for (var i = 0; i < ids.length; i++) {
+              var info = null;
+              try {
+                info = typeof sessions.retainInfo === 'function' ? sessions.retainInfo(ids[i]) : null;
+              } catch (e2) { info = null; }
+              var shot = info && typeof info.getSnapshot === 'function' ? info.getSnapshot() : null;
+              if (shot && shot.retainedBy && (shot.retainedBy.mainView || 0) > 0) {
+                activeId = ids[i];
+                break;
+              }
+            }
+            // 一个 mainView 都没有（快照时序的空窗）：只有唯一个会话就大胆用它，
+            // 多个分不清就返回 null 交给 Host 回落——猜错对话框比回落更糟。
+            if (activeId === null && ids.length === 1) activeId = ids[0];
+          }
+        } catch (e3) { activeId = null; }
+        if (activeId === null) return null;
+        var binding = sessions.binding(activeId);
+        if (!binding || !binding.session || !binding.session.projections
+          || typeof binding.session.projections.faceOf !== 'function') return null;
+        var face = binding.session.projections.faceOf('modelSelection');
+        var model = face && typeof face.getSnapshot === 'function' ? face.getSnapshot() : null;
+        if (!model) return null;
+        var sel = model.next || model.lastUsed;
+        if (!sel || typeof sel.provider !== 'string' || typeof sel.model !== 'string') return null;
+        var route = { provider: sel.provider, model: sel.model, sessionId: activeId };
+        if (typeof sel.reasoningEffort === 'string' && sel.reasoningEffort !== '') {
+          route.reasoningEffort = sel.reasoningEffort;
+        }
+        return route;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    /**
      * 打一次 Host 的优化路由。**永不 reject**：失败一律变成 `{ok:false, message}`，
      * 由界面显示给人看（拖一次不该在控制台留一个未处理的 rejection）。
      *
      * @param {string} text - 文本框里的原文。
-     * @returns {Promise<{ok: boolean, optimized?: string, message?: string, cached?: boolean}>}
+     * @returns {Promise<{ok: boolean, optimized?: string, message?: string, cached?: boolean,
+     *          unchanged?: boolean, usage?: {prompt: number, completion: number, total: number}|null}>}
      */
     function optimizePrompt(text) {
       try {
@@ -629,7 +948,8 @@ window.__ModuleLoader__.load({
         return fetch(window.location.origin + OPTIMIZE_ROUTE, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text: text }),
+          // route = 当前对话框的模型选择（读不到为 null，Host 自行回落）。
+          body: JSON.stringify({ text: text, route: sessionRoute() }),
         }).then(
           function (response) {
             if (!response) throw new Error('没有响应');
@@ -642,6 +962,9 @@ window.__ModuleLoader__.load({
                   ok: true,
                   optimized: payload.optimized,
                   cached: payload.cached === true,
+                  unchanged: payload.unchanged === true,
+                  rounds: typeof payload.rounds === 'number' ? payload.rounds : 1,
+                  usage: payload.usage && typeof payload.usage === 'object' ? payload.usage : null,
                   model: payload.model,
                 };
               },
@@ -657,6 +980,83 @@ window.__ModuleLoader__.load({
       } catch (error) {
         return Promise.resolve({ ok: false, message: String(error && error.message ? error.message : error) });
       }
+    }
+
+    /**
+     * 打一次 Host 的**三版优化**路由。同样永不 reject。
+     *
+     * @returns {Promise<{ok: boolean, variants?: Array<{key:string,label:string,
+     *           optimized:string,unchanged:boolean,usage:object|null,cached:boolean,
+     *           ms:number|null}>, message?: string}>} ms = 这一版想了多久（缓存命中为 null）。
+     */
+    function optimizePrompt3(text) {
+      try {
+        if (typeof fetch !== 'function') {
+          return Promise.resolve({ ok: false, message: '这个环境没有 fetch，接不到 Host' });
+        }
+        if (typeof window === 'undefined' || !window.location || !window.location.origin) {
+          return Promise.resolve({ ok: false, message: '非浏览器环境，接不到 Host' });
+        }
+        return fetch(window.location.origin + OPTIMIZE3_ROUTE, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          // route = 当前对话框的模型选择（读不到为 null，Host 自行回落）。
+          body: JSON.stringify({ text: text, route: sessionRoute() }),
+        }).then(
+          function (response) {
+            if (!response) throw new Error('没有响应');
+            return response.json().then(
+              function (payload) {
+                if (!payload || payload.ok !== true) {
+                  return { ok: false, message: (payload && payload.message) || `HTTP ${response.status}` };
+                }
+                return { ok: true, variants: Array.isArray(payload.variants) ? payload.variants : [] };
+              },
+              function () {
+                return { ok: false, message: `Host 返回的不是 JSON（HTTP ${response.status}）` };
+              },
+            );
+          },
+          function (error) {
+            return { ok: false, message: `连不上 Host：${error && error.message ? error.message : String(error)}` };
+          },
+        );
+      } catch (error) {
+        return Promise.resolve({ ok: false, message: String(error && error.message ? error.message : error) });
+      }
+    }
+
+    /**
+     * 完成气泡里的 token 注脚：`· 约 2.1k tokens`。
+     *
+     * 只在 Host 真的报了 usage 时显示——缓存命中没花钱，报一个「上次的」数字
+     * 反而是误导；上游没给 usage（老端点/被网关剥过）就安静省略。
+     */
+    function usageNote(usage) {
+      if (!usage || typeof usage !== 'object') return '';
+      const total = Number(usage.total);
+      if (!Number.isFinite(total) || total <= 0) return '';
+      return ' · 约 ' + formatTokens(total) + ' tokens';
+    }
+
+    /**
+     * 耗时写法：`12.3s` / `840ms`。不是正数就返回空串。
+     *
+     * 缓存命中的那一版**根本没跑上游**（Host 不给 ms），显示「0.0s」等于在说
+     * "它想过，只是没花时间" —— 没数据就安静省略，绝不编一个 0 出来。
+     */
+    function formatThinking(ms) {
+      const n = Number(ms);
+      if (!Number.isFinite(n) || n <= 0) return '';
+      if (n < 1000) return Math.round(n) + 'ms';
+      const s = n / 1000;
+      return (s < 10 ? s.toFixed(1) : String(Math.round(s))) + 's';
+    }
+
+    /** 完成气泡里的耗时注脚：`· 思考 12.3s`。没数据就空串。 */
+    function thinkingNote(ms) {
+      const text = formatThinking(ms);
+      return text ? ' · 思考 ' + text : '';
     }
 
     // ============================================================================
@@ -675,7 +1075,18 @@ window.__ModuleLoader__.load({
     /** UI 设置（详情页模式 / 优化开关）：GET 读取、POST 写入；key 永远不经过这里。 */
     var SETTINGS_ROUTE = '/dsh-deepseek-peak-whale/api/settings';
     /** 设置页与详情浮层共享一份 UI 设置（wallet 载荷没带时回落默认值：默认简洁版）。 */
-    var uiSettingsState = { uiMode: 'concise', optimizeEnabled: true, apiKeyConfigured: false };
+    // `promptStyle` / `promptStyles` 是提示词风格那项：清单由 Host 随设置一起回传，
+    // 客户端**不硬编码任何风格名**（用户明确要求风格清单未指定时不自行编造）。
+    var uiSettingsState = {
+      uiMode: 'concise',
+      optimizeEnabled: true,
+      petVisible: true,
+      apiKeyConfigured: false,
+      promptStyle: 'default',
+      promptStyles: null,
+      /** 鲸鱼娘配色（第二档 #6）：'mint' | 'mono' | 'navigator' | ... 见 WHALE_PALETTES。 */
+      palette: 'mint',
+    };
     var uiSettingsListeners = [];
     /**
      * `layout` 客户端服务：**按需解析，绝不在 apply 时抓一次缓存**。
@@ -732,8 +1143,14 @@ window.__ModuleLoader__.load({
     }
 
     /** 更新 UI 设置并通知订阅者；永不 reject（失败静默，下一轮 wallet 轮询会纠正）。 */
+    // ⚠️ 这里是**合并**而不是整份替换：乐观更新只带被改的那一个字段
+    // （比如 `{promptStyle: 'x'}`）。整份替换会把 uiMode / promptStyles 一起抹掉，
+    // 于是「刚点一下风格，下面整行连同选项就消失了」—— 下一次 wallet 轮询才回来，
+    // 表现为控件闪一下又出现。这是个只在一闪而过时才看得见的 bug。
     function publishUiSettings(next) {
-      if (next && typeof next === 'object') uiSettingsState = next;
+      if (next && typeof next === 'object') {
+        uiSettingsState = { ...uiSettingsState, ...next };
+      }
       for (var i = 0; i < uiSettingsListeners.length; i += 1) {
         try {
           uiSettingsListeners[i](uiSettingsState);
@@ -926,7 +1343,7 @@ window.__ModuleLoader__.load({
       }
       // 账户服务缺席 / 还没查到：不摆一个「—」占位，直接不显示这一段。
 
-      if (wallet.today) items.push({ label: '今日', value: formatUsdAmount(wallet.today.usd) });
+      if (wallet.today) items.push({ label: '今日', value: formatCnyAmount(wallet.today.cny) });
       return items;
     }
 
@@ -986,23 +1403,27 @@ window.__ModuleLoader__.load({
       if (bal.status === 'ready') {
         var wallets = Array.isArray(bal.wallets) ? bal.wallets : [];
         for (var i = 0; i < wallets.length; i += 1) {
+          // 币种取接口给的；缺字段时回落 CNY —— 本插件已全面按人民币计价，
+          // 标签与符号必须用同一个值，否则会出现「余额（CNY）$240.98」这种自相矛盾的行。
+          var wCur = wallets[i].currency || 'CNY';
           rows.push(
             h(
               'div',
               { key: 'w' + i, className: 'pw-wallet-row' },
-              h('span', { className: 'pw-label' }, '余额（' + (wallets[i].currency || 'USD') + '）'),
-              h('span', { className: 'pw-value' }, formatMoney(wallets[i].balance, wallets[i].currency)),
+              h('span', { className: 'pw-label' }, '余额（' + wCur + '）'),
+              h('span', { className: 'pw-value' }, formatMoney(wallets[i].balance, wCur)),
             ),
           );
         }
         var bonus = Array.isArray(bal.bonus) ? bal.bonus : [];
         for (var j = 0; j < bonus.length; j += 1) {
+          var bCur = bonus[j].currency || 'CNY';
           rows.push(
             h(
               'div',
               { key: 'g' + j, className: 'pw-wallet-row' },
-              h('span', { className: 'pw-label' }, '赠送（' + (bonus[j].currency || 'USD') + '）'),
-              h('span', { className: 'pw-value' }, formatMoney(bonus[j].balance, bonus[j].currency)),
+              h('span', { className: 'pw-label' }, '赠送（' + bCur + '）'),
+              h('span', { className: 'pw-value' }, formatMoney(bonus[j].balance, bCur)),
             ),
           );
         }
@@ -1015,7 +1436,7 @@ window.__ModuleLoader__.load({
             'div',
             { key: 't', className: 'pw-wallet-row pw-wallet-row--today' },
             h('span', { className: 'pw-label' }, '今日费用 · ' + today.date),
-            h('span', { className: 'pw-value' }, formatUsdAmount(today.usd)),
+            h('span', { className: 'pw-value' }, formatCnyAmount(today.cny)),
           ),
         );
         rows.push(
@@ -1050,6 +1471,31 @@ window.__ModuleLoader__.load({
       }
       if (links.length > 0) rows.push(h('div', { key: 'lk', className: 'pw-wallet-links' }, links));
 
+      // 导出账单按钮
+      rows.push(
+        h(
+          'button',
+          {
+            key: 'exp',
+            className: 'pw-export-btn',
+            onClick: function () {
+              try {
+                var base = walletUrl();
+                if (base === null) return;
+                var href = base + '/export?format=csv';
+                if (typeof window !== 'undefined' && typeof window.open === 'function') {
+                  window.open(href, '_blank', 'noopener,noreferrer');
+                } else {
+                  // 降级：直接跳转
+                  window.location.href = href;
+                }
+              } catch (error) { /* 打不开就忽略 */ }
+            },
+          },
+          '导出账单 CSV',
+        ),
+      );
+
       return [h('div', { key: 'card', className: 'pw-wallet-card' }, rows)];
     }
 
@@ -1078,10 +1524,19 @@ window.__ModuleLoader__.load({
       return h(
         'td',
         { key: key },
-        h('span', { className: isPeak ? 'pw-dim' : 'pw-now' }, formatUsd(bucket.off)),
+        h('span', { className: isPeak ? 'pw-dim' : 'pw-now' }, formatCny(bucket.off)),
         h('span', { className: 'pw-slash' }, ' / '),
-        h('span', { className: isPeak ? 'pw-now' : 'pw-dim' }, formatUsd(bucket.peak)),
+        h('span', { className: isPeak ? 'pw-now' : 'pw-dim' }, formatCny(bucket.peak)),
       );
+    }
+
+    /**
+     * 「距下次谷时/峰时」倒计时文案 —— 价格条与详情浮层共用一份，
+     * 保证窄轨、宽轨、浮层三处说法一致（第二档 #7）。
+     * s.nextIsPeak 为真表示下一个切换点是峰时（全价），否则是谷时（半价）。
+     */
+    function nextCountdownText(s) {
+      return '距下次' + (s.nextIsPeak ? '峰时' : '谷时') + ' ' + formatDuration(s.minutesLeft);
     }
 
     /** 弹出详情的内容（外壳卡片由 .pw-pop 提供）。`mode`：'concise' 简洁版 / 其余详细版。 */
@@ -1093,20 +1548,17 @@ window.__ModuleLoader__.load({
       var periodBlock = [
         h('div', { key: 't' }, '北京时间 ', h('b', null, formatBeijingFull(now)), ' （', WEEKDAY_CN[p.weekday], '）'),
         h('div', { key: 'c' }, '当前：', h('b', null, desc.title), ' —— ', desc.note),
-        h(
-          'div',
-          { key: 'n' },
-          '下次切换：',
-          h('b', null, boundaryLabel(now, s.next)),
-          ' → ',
-          s.nextIsPeak ? '峰时（全价）' : '谷时（半价）',
-          '，还需 ',
-          h('b', null, formatDuration(s.minutesLeft)),
-        ),
+        h('div', { key: 'n' }, '下次切换：', h('b', null, boundaryLabel(now, s.next)), ' → ', s.nextIsPeak ? '峰时（全价）' : '谷时（半价）'),
+        // 倒计时单列一行：简洁版与详细版共用这块，所以两处都会显示「距下次谷时 X」。
+        h('div', { key: 'd' }, '距下次', h('b', null, s.nextIsPeak ? '峰时' : '谷时'), '：', h('b', null, formatDuration(s.minutesLeft))),
       ];
 
-      // 「设置」按钮：两种模式都挂在卡片底部（吸底）。
-      // 只在详细版给入口会形成死循环 —— 切模式本身要去设置页，简洁版用户就永远进不去。
+      // 底部动作行：两种模式都挂（吸底）。「设置」跳内置插件设置页；
+      // 「token 消耗详情」直接打开官方用量页——明细只能在那看，本地算不出来。
+      // 只在详细版给「设置」入口会形成死循环（切模式本身要去设置页，简洁版用户就永远进不去）。
+      var usageHref = (wallet && wallet.acc && typeof wallet.acc.usageUrl === 'string' && wallet.acc.usageUrl !== '')
+        ? wallet.acc.usageUrl
+        : 'https://platform.deepseek.com/usage';
       var settingsActions = h(
         'div',
         { key: 'act', className: 'pw-actions' },
@@ -1122,6 +1574,23 @@ window.__ModuleLoader__.load({
             },
           },
           '设置',
+        ),
+        h(
+          'button',
+          {
+            key: 'usage',
+            type: 'button',
+            className: 'pw-usage-btn',
+            title: '打开 DeepSeek 开放平台用量页（官方明细）',
+            onClick: function () {
+              try {
+                if (typeof window !== 'undefined' && typeof window.open === 'function') {
+                  window.open(usageHref, '_blank', 'noopener,noreferrer');
+                }
+              } catch (error) { /* 打不开就忽略，用户还能复制链接 */ }
+            },
+          },
+          'token 消耗详情',
         ),
       );
 
@@ -1167,7 +1636,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { key: 'u' },
-          '单位：美元 / 100 万 tokens，格式为 ',
+          '单位：人民币元 / 100 万 tokens，格式为 ',
           h('span', { className: 'pw-now' }, '当前档'),
           ' / ',
           h('span', { className: 'pw-dim' }, '另一档'),
@@ -1184,7 +1653,7 @@ window.__ModuleLoader__.load({
           'div',
           { key: 'src', className: 'pw-foot' },
           '数据来源 ',
-          h('a', { className: 'pw-link', href: PRICING_URL, target: '_blank', rel: 'noreferrer' }, 'api-docs.deepseek.com/quick_start/pricing'),
+          h('a', { className: 'pw-link', href: PRICING_URL_CN, target: '_blank', rel: 'noreferrer' }, 'api-docs.deepseek.com/zh-cn/quick_start/pricing'),
           '（抓取于 ',
           PRICING_AS_OF,
           '）',
@@ -1218,7 +1687,7 @@ window.__ModuleLoader__.load({
       var desc = describePeriod(s);
       var off = s.isHalfPrice;
       var wide = !!(props && props.wide);
-      var countdown = (off ? '距峰时 ' : '距半价 ') + formatDurationShort(s.minutesLeft);
+      var countdown = nextCountdownText(s);
       /** 第二行的「余额 · 今日费用」分段：窄轨态与**没数据**时整行都不渲染。 */
       var segments = wide ? walletItems(wallet) : [];
       var walletText = wide ? walletSummary(wallet) : null;
@@ -1226,7 +1695,8 @@ window.__ModuleLoader__.load({
       var title =
         'DeepSeek 峰谷计价（北京时间 ' + formatBeijingFull(now) + '）\n' +
         '当前：' + desc.title + ' —— ' + desc.note + '\n' +
-        '下次切换：' + boundaryLabel(now, s.next) + '，还需 ' + formatDuration(s.minutesLeft) +
+        '下次切换：' + boundaryLabel(now, s.next) + '（' + (s.nextIsPeak ? '峰时' : '谷时') + '）\n' +
+        nextCountdownText(s) +
         (walletText === null ? '' : '\n' + walletText) +
         '\n点击展开今日价格表';
 
@@ -1337,8 +1807,20 @@ window.__ModuleLoader__.load({
     var AFFINITY_KEY = 'dsh-peak-whale.affinity.v1';
     var PETS_PER_LEVEL = 5;
     var MAX_LEVEL = 10;
+    /** 活力度的存储键（存 0~1 的值 + 是否手动改过）；独立于亲密度存档。 */
+    var MOOD_KEY = 'dsh-peak-whale.mood.v1';
+    /** 拖拽时「靠近输入框」的判定距离（视口像素）。 */
+    var NEAR_COMPOSER_PX = 80;
+    /**
+     * 「坐好」的存储键 —— 照 Minecraft 里狗的 `sit` 命令那个逻辑：
+     * 你说一声「坐好」，她就地坐下并且**不再自己乱跑**，一直坐到你说「起来」。
+     * 存进 localStorage，所以刷新页面 / 重开 DSH 她还是坐着的（狗也这样）。
+     */
+    var SIT_KEY = 'dsh-peak-whale.sit.v1';
     /** 音效开关的存储键（createSfx 读它，值为 'off' 即静音）。 */
     var SOUND_KEY = 'dsh-peak-whale.sound.v1';
+    /** 亲密度档位（活动强度档）的存储键，v1 与 sit 一样存本机。 */
+    var STYLE_KEY = 'dsh-peak-whale.style.v1';
     /** 窗口很高时别让她长得太大。 */
     var PET_SCALE_MAX = 0.6;
     /** 菜单「换个姿势」的候选：去掉 walk / run —— 那是自由漫游自己会做的事。 */
@@ -1347,6 +1829,256 @@ window.__ModuleLoader__.load({
     ).filter(function (m) {
       return m !== 'walk' && m !== 'run';
     });
+
+    /**
+     * 三档活动强度 —— 她到底闹不闹。
+     *
+     * 这是唯一控制她动作多少的旋钮，三档**不是把同一套动作开关掉**，而是各自有不同的
+     * 候选池与不同的触发节奏：
+     *   quiet  —— 只有微动作，场景反应也只在「久到离谱」时才给，不吵你干活；
+     *   daily  —— 默认。日常动作 + 完整场景反应；
+     *   lively —— 多两个大动作（打滚、扒拉），触发更频繁，会打断你。
+     *
+     * `tempo` 是**所有**触发器共用的乘数：她每次决定「现在要不要动」之前都要过它。
+     * 写成纯函数是因为它同时被设置面板、菜单和测试用到。
+     */
+    var STYLE_TIERS = [
+      { id: 'quiet', name: '安静', note: '几乎不动：眨眼、耳朵抖、呼吸起伏。只在你真的离开很久之后才有反应。', tempo: 0.55, gestureEvery: [42, 78], idleMs: [240, 420], motions: ['stretch', 'peek', 'peekaboo', 'curl'], reactions: 0.5, idleGestures: 0 },
+      { id: 'daily', name: '日常', note: '默认。逗她有十几个小动作，她也会看场景自己动，但不打扰你干活。', tempo: 1, gestureEvery: [16, 34], idleMs: [110, 240], motions: ['stretch', 'peek', 'shakeout', 'beg', 'curl', 'peekaboo', 'swat', 'giggle', 'curtsy', 'nudge', 'lick'], reactions: 1, idleGestures: 1 },
+      // 候选池里**不能有重复项**：`pickGesture` 是按下标随机抽的，重复项等于给那个
+      // 动作加权两次 —— 活泼档里 swat/shakeout 各写了两遍，结果她会莫名其妙地偏爱这两个动作。
+      // 窗口要跟着 tempo 一起缩：`styleDelay` 是拿区间**除以** tempo，所以想让活泼档
+      // 的最短间隔也快过日常档的最短间隔，光加 tempo 是不够的，区间本身也得收窄。
+      { id: 'lively', name: '活泼', note: '她就是个桌宠，该闹就闹：加打滚和扒拉，触发更频繁，会抢你的注意力。', tempo: 1.6, gestureEvery: [9, 20], idleMs: [40, 95], motions: ['stretch', 'peek', 'shakeout', 'beg', 'curl', 'peekaboo', 'swat', 'giggle', 'curtsy', 'shiver', 'nudge', 'lick', 'brace'], reactions: 1.5, idleGestures: 2 },
+    ];
+
+    /** 取一档；认不出就回 daily（默认档），绝不因为一个坏值就让她变成另一个人。 */
+    function styleTier(id) {
+      for (var i = 0; i < STYLE_TIERS.length; i++) if (STYLE_TIERS[i].id === id) return STYLE_TIERS[i];
+      return STYLE_TIERS[1];
+    }
+    function loadStyle(storage) {
+      try {
+        if (!storage || typeof storage.getItem !== 'function') return 'daily';
+        var raw = storage.getItem(STYLE_KEY);
+        return raw ? styleTier(raw).id : 'daily';
+      } catch (error) { return 'daily'; }
+    }
+    function saveStyle(storage, id) {
+      try {
+        if (!storage || typeof storage.setItem !== 'function') return;
+        storage.setItem(STYLE_KEY, styleTier(id).id);
+      } catch (error) { /* 存不上不影响使用 */ }
+    }
+    /**
+     * 配色（第二档 #6）。
+     *
+     * 与 pet-core 的 7 套 PALETTES 同构（id/label/l/d）。这里必须自带一份：
+     * 鲸鱼娘是**贴图渲染**（vendor/figure.js 用 scheme 的贴图 + accent），皮肤对象的
+     * palette 只影响 pet-core 内置 Coo 的 CSS 变量，管不到她。所以切换配色实际改的是
+     * 「特效主色」——把当前 scheme 的 accent 换成所选配色的主色，立刻影响竖耳弧 /
+     * 思考气泡 / 睡 z（正是 #8 的 setListening/setThinking 会点亮的东西）；同时把
+     * palette 写回 pet-core 的 skin，保持皮肤对象一致，以后换内置人偶也能用。
+     */
+    var WHALE_PALETTES = [
+      { id: 'mint', label: '薄荷绿', l: ['#1B1626', '#00A870'], d: ['#FFFFFF', '#2FD59B'] },
+      { id: 'mono', label: '单色', l: ['#1B1626', '#1B1626'], d: ['#FFFFFF', '#FFFFFF'] },
+      { id: 'navigator', label: '领航员', l: ['#14213A', '#1F6FE0'], d: ['#FFFFFF', '#5EA3FF'] },
+      { id: 'claude', label: '克劳德', l: ['#2A1C16', '#C9623F'], d: ['#FFFFFF', '#E58B69'] },
+      { id: 'fox', label: '红狐狸', l: ['#26140F', '#DD3526'], d: ['#FFFFFF', '#FF6655'] },
+      { id: 'purple', label: '虚式茈', l: ['#1D1430', '#8B3DF0'], d: ['#FFFFFF', '#B98AFF'] },
+      { id: 'lemon', label: '柠檬黄', l: ['#252010', '#D9B300'], d: ['#FFFFFF', '#FFE14F'] },
+    ];
+    /** 配色本机存档键（与活力度/坐好一样走 localStorage；Host 设置用于跨设备同步）。 */
+    var PALETTE_KEY = 'dsh-peak-whale.palette.v1';
+    /** 认配色；认不出就回第一套（绝不因为一个坏值让特效主色消失）。 */
+    function paletteById(id) {
+      for (var i = 0; i < WHALE_PALETTES.length; i++) if (WHALE_PALETTES[i].id === id) return WHALE_PALETTES[i];
+      return WHALE_PALETTES[0];
+    }
+    /** 某套配色的主色（浅色侧用 l[1]，深色侧用 d[1]）。 */
+    function paletteAccent(id, dark) {
+      var p = paletteById(id);
+      return dark ? p.d[1] : p.l[1];
+    }
+    function loadPalette(storage) {
+      try {
+        if (!storage || typeof storage.getItem !== 'function') return 'mint';
+        var raw = storage.getItem(PALETTE_KEY);
+        return raw ? paletteById(raw).id : 'mint';
+      } catch (error) { return 'mint'; }
+    }
+    function savePalette(storage, id) {
+      try {
+        if (!storage || typeof storage.setItem !== 'function') return;
+        storage.setItem(PALETTE_KEY, paletteById(id).id);
+      } catch (error) { /* 存不上不影响使用 */ }
+    }
+    /**
+     * 在 `[lo, hi]` 秒的窗口里按档位缩放取一个数。
+     *
+     * tempo < 1 时**把窗口拉长**而不是取中间值：安静档的「20~40 秒来一次」
+     * 变成「36~73 秒来一次」，这样安静是真的安静，而不是「照样频繁地做小事」。
+     */
+    function styleDelay(range, tempo) {
+      var t = typeof tempo === 'number' && tempo > 0 ? tempo : 1;
+      var lo = range[0] / t, hi = range[1] / t;
+      return lo + Math.random() * (hi - lo);
+    }
+    /** 从候选池里挑一个；池子空或全被过滤掉时返回 null（宁可不动，也不要演一个不存在的动作）。 */
+    function pickGesture(pool, allowed) {
+      var list = [];
+      for (var i = 0; i < pool.length; i++) if (!allowed || allowed.indexOf(pool[i]) >= 0) list.push(pool[i]);
+      if (!list.length) return null;
+      return list[Math.floor(Math.random() * list.length)];
+    }
+
+    // ============================================================================
+    //  场景反应：她看情况自己动
+    //
+    //  判定全在下面这个纯状态机里（吃「上一次输入是什么时候 / 现在在不在打字 /
+    //  刚跑完优化没」，吐出「该演哪个动作、没有就什么都不做」），所以能直接单测；
+    //  真正的「让她演」由主循环每帧调一次 driveReactions 完成 —— 就像打字回避那样。
+    //
+    //  为什么要有冷却：没有的话，一段长按不放手、或者光标停着不动，
+    //  会让她每帧都判定「你还在打字」然后每帧都想演 —— 表现就是不停抽搐。
+    // ============================================================================
+    /** 各反应的门槛（毫秒）与冷却。阈值差异很大是有原因的，见下面注释。 */
+    var REACT = {
+      // 你回来：从「完全没有输入」变成「有输入」的那一刻，一次性的
+      back: { after: 25000, cool: 12000 },
+      // 你打字打太久：靠**连续**时长，所以只有真的在写才算，跑一会儿鼠标不算
+      typing: { after: 90000, cool: 60000 },
+      // 电脑太久没动静（你在想事情或者离开了）：这个是"待机"，阈值给得长
+      idle: { after: 180000, cool: 45000 },
+      // 久到离谱，连招呼都不打了，她自己打哈欠躺下
+      idleSleep: { after: 600000, cool: 1 },
+      // 坐好过期：电脑这么久没人管，「坐好」就没有意义了，解除它让她自己活动
+      autoRise: { after: 600000, cool: 1000 },
+      // 优化刚跑完
+      done: { after: 0, cool: 30000 },
+    };
+    /** 冷却到期之前，再来同样的情况也不许演。 */
+    var REACT_COOLDOWN = 1;
+
+    /**
+     * 场景反应状态机（纯函数，不碰 DOM / 不碰 ctl）。
+     *
+     * @param {object} s  上一次返回的状态（第一次传 null）
+     * @param {object} n  现在的观察值：
+     *   now        当前时刻（ms）
+     *   inputAt    你上一次有输入（键盘/鼠标/滚轮）的时刻
+     *   typing     你现在是不是在打字
+     *   justDone   刚刚跑完一次提示词优化（消费掉会自己置 false）
+     *   tier       活动强度档对象
+     * @returns {{gesture?: string, say?: string, sleep?: boolean, state: object}}
+     *
+     * `state` **必须**每次都带在返回值里（哪怕这一帧什么都没演）：调用方是
+     * `driveReactions`，它只认返回值里的 state。早先只在 return 前顺手写
+     * `st.cd = cd` 忘了写 `out.state = st`，于是调用方的 `plan.state || reactState`
+     * 每帧都拿到 undefined、跨帧记忆全丢 —— 冷却与"你回来了"永远不生效，
+     * 而且因为不报错，测试还一度以为它在工作。
+     */
+    function reactionStep(s, n) {
+      var st = s || { doneAt: 0, sleeping: false };
+      var t = n.tier;
+      var now = n.now;
+      var out = {};
+      // 冷却表跟着状态走：记录每个反应上次**判下来要演**的时刻
+      var cd = st.cd || {};
+      var cool = function (key) {
+        return !(cd[key] != null && now - cd[key] < REACT[key].cool * REACT_COOLDOWN);
+      };
+      var mark = function (key) { cd[key] = now; };
+
+      // 活动强度低的档位把反应整体压掉一部分：安静档只保留"睡"和久到离谱的回神
+      var reactScale = t.reactions;
+
+      // 0. 坐好过期 → 自己站起来活动。这是**状态修正**，不是表演，所以：
+      //    · 排在最前面（就算她正睡着、就算这一档很安静，也照样要修）；
+      //    · 不查 reactScale（安静 ≠ 卡死）。
+      //
+      //  ⚠️ 这里**不能只靠冷却**去重。`n.sitting` 来自 React 的 store，而 `setSit(false)`
+      //    → commit → 重渲染要等下一帧才生效；冷却又是 1 秒，于是一次起身会连着喊十几次
+      //    （第一版就是这样，对着你连说"坐太久了我腿麻"）。
+      //
+      //    去重要靠**边沿**：只有「没坐 → 坐」的那一下才重新允许起身（`wasSitting` 记边沿），
+      //    报过一次就把 `canRise` 记死。若写成「只要在坐就重新允许」，那它在坐着期间每帧都会
+      //    自我重新武装，等于没记 —— 这也是第一版的第二个错。
+      if (n.sitting && !st.wasSitting) st.canRise = true;
+      if (!n.sitting) st.canRise = false;
+      st.wasSitting = !!n.sitting;
+      if (st.canRise && n.inputAt != null && (now - n.inputAt) > REACT.autoRise.after) {
+        mark('autoRise'); st.cd = cd; st.canRise = false;
+        out.rise = true; out.say = 'react.rise';
+        out.state = st;
+        return out;
+      }
+
+      // 1. 刚跑完优化 → 蹦一下。这是她唯一"有确切理由兴奋"的时刻。
+      //    放在 sleeping 检查**之前**是有意的：她睡得正香，你把活干完了，
+      //    她应该被吵起来告诉你，而不是继续装睡。
+      if (n.justDone && cool('done') && reactScale >= 1) {
+        mark('done'); out.gesture = 'beg'; out.say = 'react.done';
+        st.cd = cd; st.doneAt = now; st.sleeping = false;
+        out.state = st;
+        return out;
+      }
+      // 已经睡了就只等「你回来了」，别的都别做
+      if (st.sleeping) {
+        if (n.inputAt != null && st.lastInput != null && n.inputAt !== st.lastInput && (now - st.lastInput) > REACT.back.after) {
+          st.sleeping = false; st.lastInput = n.inputAt;
+          st.cd = cd; out.gesture = 'stretch'; out.say = 'react.wake';
+          out.state = st;
+          return out;
+        }
+        st.lastInput = n.inputAt; st.cd = cd;
+        out.state = st;
+        return out;
+      }
+      var quiet = n.inputAt != null && (now - n.inputAt) > REACT.idle.after;
+
+      // 2. 你回来了：断过很久之后又开始有输入
+      if (n.inputAt != null && st.lastInput != null && n.inputAt !== st.lastInput
+          && (now - st.lastInput) > REACT.back.after && cool('back') && reactScale >= 1) {
+        mark('back'); st.lastInput = n.inputAt; st.cd = cd;
+        out.gesture = 'peek'; out.say = 'react.back';
+        out.state = st;
+        return out;
+      }
+      // 3. 打字太久 → 趴下来看你
+      if (n.typing && st.typingSince != null && (now - st.typingSince) > REACT.typing.after
+          && cool('typing') && reactScale >= 1) {
+        mark('typing'); st.cd = cd; out.gesture = 'peek'; out.say = 'react.typing';
+        out.state = st;
+        return out;
+      }
+      if (n.typing) { if (st.typingSince == null) st.typingSince = now; }
+      else st.typingSince = null;
+
+      // 4. 待机：电脑很久没动静，她自己伸懒腰 / 抖抖毛
+      //    注意这里**不查 reactScale**：安静档也该有点"活着的痕迹"，
+      //    它安静是靠 idleGestures=0（见第 5 条之前的分支）与更慢的节奏，
+      //    而不是靠"什么都不做" —— 后者那不叫安静，那叫坏了。
+      if (quiet && cool('idle') && t.idleGestures > 0) {
+        mark('idle'); st.cd = cd;
+        out.gesture = pickGesture(['stretch', 'shakeout', 'peekaboo'], t.motions) || 'stretch';
+        out.say = 'react.idle';
+        out.state = st;
+        return out;
+      }
+      // 5. 久到离谱 → 她自己躺下（睡觉不是手势，是模式）
+      if (quiet && cool('idleSleep')) {
+        mark('idleSleep'); st.cd = cd; st.sleeping = true; st.lastInput = n.inputAt;
+        out.sleep = true; out.say = 'react.idle';
+        out.state = st;
+        return out;
+      }
+
+      st.lastInput = n.inputAt; st.cd = cd;
+      out.state = st;
+      return out;
+    }
 
     /** 互动次数 → 亲密度等级（纯函数，便于测试）。 */
     function affinityLevel(pets) {
@@ -1379,21 +2111,215 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * 读「是否坐好」——和 Minecraft 里那条 sit 命令同一套心智模型：
+     * 坐下 = 一个**持续状态**，不是一次动作。所以它要被记住，刷新了也得还在。
+     * 读取失败一律当 false（站着），绝不因为读不到就让她卡在坐姿。
+     */
+    function loadSit(storage) {
+      try {
+        if (!storage || typeof storage.getItem !== 'function') return false;
+        var parsed = JSON.parse(storage.getItem(SIT_KEY));
+        return !!(parsed && parsed.sit);
+      } catch (error) {
+        return false;
+      }
+    }
+
+    /** 写「是否坐好」；存不上也不影响本次会话内的行为（只是下次刷新不记得）。 */
+    function saveSit(storage, sit) {
+      try {
+        if (!storage || typeof storage.setItem !== 'function') return false;
+        storage.setItem(SIT_KEY, JSON.stringify({ sit: !!sit, at: Date.now() }));
+        return true;
+      } catch (error) {
+        return false;
+      }
+    }
+
+    // ============================================================================
+    //  活力度（mood）与亲密度的实时镜像
+    //
+    //  setMood 上游只有一个 0~1 的目标值，而亲密度每涨一次都会去同步它 ——
+    //  于是你在设置页拖好的滑块，下一次摸头就被亲密度冲掉了。所以要在模块级记两件事：
+    //    whaleMood.value   —— 当前生效的活力度
+    //    whaleMood.manual  —— 用户有没有手动拖过（true 之后亲密度不再自动覆盖）
+    //  两者都落 localStorage（独立于亲密度存档），刷新页面后手动值还在。
+    //
+    //  WhaleRoamer 的 store 是组件私有的，设置页读不到，所以这里再留一份**镜像**，
+    //  用极简订阅把亲密度变化推给设置页（订阅者抛错一律忽略，绝不影响桌宠）。
+    // ============================================================================
+    var whaleMood = { value: 0, manual: false };
+    var whaleMoodListeners = [];
+    var whaleAffinity = { pets: 0, level: 1 };
+    var whaleAffinityListeners = [];
+
+    /** 读活力度存档；读不到 / 坏数据一律当「未手动设定」（回落到亲密度换算）。 */
+    function loadWhaleMood(storage) {
+      try {
+        if (!storage || typeof storage.getItem !== 'function') return null;
+        var raw = storage.getItem(MOOD_KEY);
+        if (!raw) return null;
+        var parsed = JSON.parse(raw);
+        var v = parsed && typeof parsed.value === 'number' ? parsed.value : null;
+        if (v === null || !isFinite(v)) return null;
+        return { value: Math.min(1, Math.max(0, v)), manual: !!(parsed && parsed.manual) };
+      } catch (error) {
+        return null;
+      }
+    }
+
+    /** 写活力度存档；存不上不影响本次会话（只是下次刷新不记住）。 */
+    function saveWhaleMood(storage, value, manual) {
+      try {
+        if (!storage || typeof storage.setItem !== 'function') return false;
+        storage.setItem(MOOD_KEY, JSON.stringify({
+          value: value, manual: !!manual, at: Date.now(),
+        }));
+        return true;
+      } catch (error) {
+        return false;
+      }
+    }
+
+    /** 亲密度 → 活力度（0~1）。纯函数，便于测试。 */
+    function moodFromPets(pets) {
+      return Math.min(1, Math.log(1 + (pets || 0)) / Math.log(121));
+    }
+
+    /** 启动时把存档读进模块状态。 */
+    (function initWhaleMood() {
+      var saved = loadWhaleMood(safeStorage());
+      if (saved) whaleMood = saved;
+    })();
+
+    /** 取当前活力度（0~1）。 */
+    function getWhaleMood() { return whaleMood; }
+
+    /** 订阅活力度变化（设置页的滑块靠它自动跟随亲密度）。 */
+    function subscribeWhaleMood(fn) {
+      whaleMoodListeners.push(fn);
+      return function () {
+        var i = whaleMoodListeners.indexOf(fn);
+        if (i >= 0) whaleMoodListeners.splice(i, 1);
+      };
+    }
+    function notifyWhaleMood() {
+      for (var i = 0; i < whaleMoodListeners.length; i += 1) {
+        try { whaleMoodListeners[i](whaleMood); } catch (error) { /* 订阅者炸了不影响别人 */ }
+      }
+    }
+
+    /** 取亲密度的实时镜像（设置页显示用）。 */
+    function getWhaleAffinity() { return whaleAffinity; }
+
+    /** 订阅亲密度变化。 */
+    function subscribeWhaleAffinity(fn) {
+      whaleAffinityListeners.push(fn);
+      return function () {
+        var i = whaleAffinityListeners.indexOf(fn);
+        if (i >= 0) whaleAffinityListeners.splice(i, 1);
+      };
+    }
+    function notifyWhaleAffinity() {
+      for (var i = 0; i < whaleAffinityListeners.length; i += 1) {
+        try { whaleAffinityListeners[i](whaleAffinity); } catch (error) { /* 同上 */ }
+      }
+    }
+
+    /** 把活力度同步给 pet-core（它没有独立状态，只能被外部设值）。 */
+    function syncWhaleMoodToPet() {
+      var api = exports.__whaleApi;
+      var ctl = api && api.ctl;
+      if (ctl && typeof ctl.setMood === 'function') {
+        try { ctl.setMood(whaleMood.value); } catch (error) { /* 忽略 */ }
+      }
+    }
+
+    /**
+     * 应用活力度。
+     * manual=true：用户手动拖动 —— 写存档、置手动标志、同步宠物、通知订阅者。
+     * manual=false：恢复自动跟随 —— 值由亲密度换算，只清掉手动标志。
+     */
+    function applyWhaleMood(value, manual) {
+      var v = Math.min(1, Math.max(0, Number(value) || 0));
+      whaleMood = { value: v, manual: !!manual };
+      saveWhaleMood(safeStorage(), v, !!manual);
+      syncWhaleMoodToPet();
+      notifyWhaleMood();
+      return v;
+    }
+
+    /**
+     * 亲密度进度（纯函数，便于测试与设置页共用）。
+     * 到满级时 toNext = 0（没有「再互动 N 次」这回事了），用 max 区分。
+     */
+    function affinityProgress(pets) {
+      var n = typeof pets === 'number' && pets > 0 ? Math.floor(pets) : 0;
+      var level = affinityLevel(n);
+      if (level >= MAX_LEVEL) return { pets: n, level: level, toNext: 0, max: true };
+      return { pets: n, level: level, toNext: PETS_PER_LEVEL - (n % PETS_PER_LEVEL), max: false };
+    }
+
+    /** 订阅亲密度镜像（设置页用）。 */
+    function useWhaleAffinity() {
+      var pair = react.useState(whaleAffinity);
+      var setValue = pair[1];
+      react.useEffect(function () {
+        whaleAffinityListeners.push(setValue);
+        return function () {
+          var index = whaleAffinityListeners.indexOf(setValue);
+          if (index >= 0) whaleAffinityListeners.splice(index, 1);
+        };
+      }, []);
+      return pair[0];
+    }
+
+    /** 订阅活力度（设置页滑块用）。 */
+    function useWhaleMood() {
+      var pair = react.useState(whaleMood);
+      var setValue = pair[1];
+      react.useEffect(function () {
+        whaleMoodListeners.push(setValue);
+        return function () {
+          var index = whaleMoodListeners.indexOf(setValue);
+          if (index >= 0) whaleMoodListeners.splice(index, 1);
+        };
+      }, []);
+      return pair[0];
+    }
+
     function WhaleRoamer() {
       // 可变 store + 手动重渲染：rAF 闭包永远读到最新值，不会踩 stale state。
       var store = react.useState(function () {
         var saved = loadAffinity(safeStorage());
+        // 同步亲密度镜像：设置页可能在桌宠之前挂载，不能只靠 bumpAffinity 更新。
+        whaleAffinity = { pets: saved, level: affinityLevel(saved) };
         return {
           ready: false,
           pets: saved,
           level: affinityLevel(saved),
+          /** 拖拽时是否贴着输入框（辉光反馈）；松手即清，不落盘。 */
+          near: false,
+          /**
+           * 「坐好」：就地坐下并且不再自己乱跑，一直坐到你说「起来活动」。
+           * 是**持续状态**（照 Minecraft 里狗的 sit 命令），所以刷新页面也还在。
+           */
+          sit: loadSit(safeStorage()),
+          /**
+           * 活动强度档（quiet / daily / lively）：决定她有多少动作、触发多频繁。
+           * 也存本机 —— 你选了「安静」，下次开 DSH 她还是安静的。
+           */
+          style: loadStyle(safeStorage()),
           menu: null,
           /** 提示词优化：进行中（拖投递后等上游返回） */
           busy: false,
           /**
            * 优化流程的气泡（**挂在小鲸鱼身上**，跟着她走）：
            *   busy  「正在优化提示词中…」（无按钮）
-           *   done  询问是否撤销的对话框：√ 撤销 / × 保留（不设消失时间，一直等你选）
+           *   pick  三版选一：整行替换 / 行内只复制 / 底部不优化+关闭（不设消失时间）
+           *   paste 写不进框：摊正文 + 复制 / 关闭
+           *   info  「已换成「X」那版…」（6 秒后自收）
            *   error 失败原因 + 「知道了」，8 秒后自动收起
            */
           opt: null,
@@ -1426,10 +2352,18 @@ window.__ModuleLoader__.load({
       var bubbleRef = react.useRef(null);
       /** 优化气泡的 DOM：位置每帧钉在小鲸鱼头顶（拖着她跑时气泡跟着走）。 */
       var optRef = react.useRef(null);
+      /** 人偶显示开关（设置页 → 显示/关闭小鲸鱼人偶）。 */
+      var uiSettings = useUiSettings();
 
       function commit(patch) {
         for (var key in patch) {
           if (Object.prototype.hasOwnProperty.call(patch, key)) store[key] = patch[key];
+        }
+        // busy 状态反馈（第二档 #8）：优化进行中让她「思考」（思考气泡亮起），
+        // 完成 / 失败（busy 变 false）就收掉。这是 busy 唯一的变化入口，
+        // 所以挂在 commit 上比在每个调用点各写一遍更不容易漏。
+        if (Object.prototype.hasOwnProperty.call(patch, 'busy') && api.ctl && typeof api.ctl.setThinking === 'function') {
+          try { api.ctl.setThinking(!!store.busy); } catch (error) { /* 忽略 */ }
         }
         draw(function (n) {
           return (n + 1) % 1000000;
@@ -1447,8 +2381,126 @@ window.__ModuleLoader__.load({
         var leveledUp = level > store.level;
         saveAffinity(safeStorage(), pets);
         commit({ pets: pets, level: level });
-        if (leveledUp && api.startSpeech) api.startSpeech('亲密度升到 Lv.' + level + ' 了！');
+        // 亲密度的实时镜像：设置页（另一个组件）靠订阅它刷新「Lv.X · 再互动 M 次」。
+        whaleAffinity = { pets: pets, level: level };
+        notifyWhaleAffinity();
+        // 心情跟着亲密度走：被摸得越多，她尾巴摇得越勤。亲密度是累计的，
+        // 所以 mood 走的是它的对数而不是线性 —— 摸到 100 次不该比摸到 10 次激动十倍。
+        // 用户手动拖过活力度滑块时不再自动覆盖（否则滑块形同虚设）。
+        if (!whaleMood.manual) {
+          whaleMood.value = moodFromPets(pets);
+          if (api.ctl && typeof api.ctl.setMood === 'function') {
+            api.ctl.setMood(whaleMood.value);
+          }
+          notifyWhaleMood();
+        }
+        if (leveledUp) {
+          if (api.cueSound) api.cueSound('sparkle');
+          if (api.startSpeech) api.startSpeech('又摸我了… Lv.' + level);
+        }
       }
+
+      /**
+       * 演一个手势。返回有没有真的演起来。
+       *
+       * 三层防护，一个都不能少：
+       *   1. 这一档允许这个动作吗（安静档没有 beg / swat）；
+       *   2. pet-core 自己判断身体此刻能不能演（空中、被拎着、走路中）；
+       *   3. 演不起来就**说出来**，不能静默 —— 上次「拖过去没反应」就是这么查了半天的。
+       */
+      api.playGesture = function (name, opts) {
+        var ctl = api.ctl;
+        if (!ctl || typeof ctl.gesture !== 'function') return false;
+        var tier = styleTier(store.style);
+        var allowed = tier.motions;
+        var picked = pickGesture(allowed.indexOf(name) >= 0 ? [name] : allowed, allowed);
+        if (!picked) {
+          if (api.startSpeech) api.startSpeech('这个档位我不做这个动作');
+          return false;
+        }
+        var played = false;
+        try { played = ctl.gesture(picked) === true; } catch (error) { played = false; }
+        if (played) {
+          bumpAffinity(1);
+          pwBeacon('gesture', picked);
+          if (api.cueSound) api.cueSound('pop');
+          if (api.startSpeech) {
+            var lines = roamLines(new Date());
+            var g = lines.gesture[picked];
+            api.startSpeech(g && g.length ? pickOne(g) : null);
+          }
+        } else if (opts && opts.quiet !== true && api.startSpeech) {
+          api.startSpeech('现在动不了，等一下');
+        }
+        return played;
+      };
+
+      /** 「逗她玩」：从这一档的候选池里随机抽一个。 */
+      api.playRandomGesture = function () {
+        var tier = styleTier(store.style);
+        var pool = tier.motions.slice();
+        if (store.sit) pool = pool.concat(['curl', 'curtsy', 'peekaboo']); // 坐着也能演的小动作
+        var name = pickGesture(pool, null);
+        if (!name) return false;
+        return api.playGesture(name);
+      };
+
+      /**
+       * 切换活动强度档位。存本机，并立刻让 pet-core 知道新的心情基准。
+       *
+       * 换档**不打断她正在演的动作** —— 正在演的让它演完，不然会出现
+       * 「你刚点活泼，她手里那个伸懒腰被腰斩」的半吊子状态。
+       */
+      api.setStyle = function (next) {
+        var tier = styleTier(next);
+        if (store.style === tier.id) return;
+        commit({ style: tier.id });
+        saveStyle(safeStorage(), tier.id);
+        if (api.ctl && typeof api.ctl.setMood === 'function') {
+          var pets = store.pets || 0;
+          api.ctl.setMood(Math.min(1, Math.log(1 + pets) / Math.log(121)));
+        }
+        pwBeacon('style', tier.id);
+        if (api.cueSound) api.cueSound('select');
+        if (api.startSpeech) {
+          api.startSpeech(tier.id === 'quiet' ? '那我小声点' : tier.id === 'lively' ? '那我可撒欢儿了啊' : '好，知道了');
+        }
+      };
+
+      /**
+       * 切换配色（第二档 #6）。
+       *
+       * 鲸鱼娘是**贴图渲染**，皮肤对象的 palette 管不到她，所以这里做两件事：
+       *   1. 把 palette 写回 pet-core 的 skin（皮肤对象保持一致，以后换内置人偶能用）；
+       *   2. 把当前 scheme 的 accent 换成所选配色的主色 —— 特效（竖耳弧 / 思考气泡 /
+       *      睡 z）是每帧读 accent 的，改完立刻生效，不需要重建 figure。
+       * 返回实际生效的配色 id（认不出就回第一套）。
+       */
+      api.applyPalette = function (id) {
+        var p = paletteById(id);
+        // 注意：ctl / figure 是 useEffect 里声明的局部变量，组件作用域里读不到，
+        // 必须走 api 上的引用（api.ctl / api.figure）。
+        var pet = api.ctl;
+        if (pet && typeof pet.setSkin === 'function') {
+          try {
+            var skin = (pet.skin && typeof pet.skin === 'object') ? pet.skin : {};
+            var next = {};
+            for (var k in skin) {
+              if (Object.prototype.hasOwnProperty.call(skin, k)) next[k] = skin[k];
+            }
+            next.palette = p.id;
+            pet.setSkin(next);
+          } catch (error) { /* 换肤失败不该影响主流程 */ }
+        }
+        var fig = api.figure;
+        if (fig && Array.isArray(fig.schemes) && typeof fig.scheme === 'string') {
+          for (var i = 0; i < fig.schemes.length; i += 1) {
+            var sc = fig.schemes[i];
+            if (sc && sc.id === fig.scheme) sc.accent = paletteAccent(p.id, false);
+          }
+        }
+        return p.id;
+      };
 
       function localPoint(event) {
         return api.pointOf ? api.pointOf(event) : { x: event.clientX, y: event.clientY };
@@ -1488,39 +2540,40 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * 投递：读原文 → 打 Host 的优化路由 → 成功就写回、留一份原稿可撤销。
-       * 整个流程的气泡都**挂在小鲸鱼身上**（拖着她跑气泡跟着走）：
-       *   busy  → 「正在优化提示词中…」（无按钮，完成即收）
-       *   成功  → 「需要撤销吗？」√ / × 对话框（不设消失时间）
-       *   失败  → 失败原因 + 「知道了」，8 秒后自动收起
+       * 投递：读原文 → 打 Host 的三版优化路由 → 弹三版可选气泡。
+       * 气泡都**挂在小鲸鱼身上**（拖着她跑气泡跟着走）：
+       *   busy → 「正在优化提示词中…」（无按钮，完成即收）
+       *   pick → 三版优化结果，每行=替换 / 行内复制 / 底部不优化+关闭（不设消失时间，等你选）
+       *   失败 → 失败原因 + 「知道了」，8 秒后自动收起
        */
       api.deliverToComposer = function (box) {
-        if (!box || store.busy) return;
-        const text = readComposer(box);
-        if (text.trim() === '') {
-          if (api.startSpeech) api.startSpeech('框里还没有提示词呀～先写一点？');
+        if (!box || store.busy) {
+          pwBeacon('deliver', !box ? 'no-box' : 'busy');
           return;
         }
+        const text = readComposer(box);
+        if (text.trim() === '') {
+          pwBeacon('deliver', 'empty-text');
+          if (api.startSpeech) api.startSpeech('框里空着呢，先写点什么');
+          return;
+        }
+        pwBeacon('deliver', 'len=' + text.length + ' tag=' + (box.tagName || '?'));
         commit({
           busy: true,
           undo: null,
           opt: { kind: 'busy', text: '正在优化提示词中…' },
         });
         // busy 气泡本身就是提示，不再抢话——两个气泡叠一起会打架。
-        optimizePrompt(text).then(function (result) {
-          if (result && result.ok && typeof result.optimized === 'string' && result.optimized !== '') {
-            writeComposer(box, result.optimized);
+        optimizePrompt3(text).then(function (result) {
+          pwBeacon('deliver-result', result && result.ok ? 'ok variants=' + (result.variants ? result.variants.length : 0) : ('fail:' + (result && result.message ? 'msg' : '?')));
+          if (result && result.ok && Array.isArray(result.variants) && result.variants.length > 0) {
             commit({
               busy: false,
-              undo: { el: box, original: text, optimized: result.optimized, since: Date.now() },
-              opt: {
-                kind: 'done',
-                text: result.cached ? '提示词优化好了（复用上次结果）' : '提示词优化好了',
-                ask: '需要撤销这次优化吗？',
-                // 不设消失时间：这个询问是**优化完成之后**才弹出来的，你不选它就一直在，
-                // 绝不会在你还没看清时就自己收起来（√ 换回原文 / × 保留）。
-                until: 0,
-              },
+              undo: null,
+              // 三版气泡：不设消失时间，等你选。box 留着（选中那版要写回去）。
+              // original 仍带上：v0.5.4 起它**不再有任何显示入口**，只是留在内存里，
+              // 万一以后要恢复对照/回退能力不必重新设计数据结构。
+              opt: { kind: 'pick', variants: result.variants, original: text, box: box, until: 0 },
             });
           } else {
             const message = (result && result.message) || '优化失败了';
@@ -1533,18 +2586,165 @@ window.__ModuleLoader__.load({
         });
       };
 
+      /**
+       * 选中某一版优化结果：**直接把改写后的正文写回文本框**，然后气泡收掉。
+       *
+       * v0.5.4 起不再留可撤销的原稿，也不再问"要不要回退"—— 只在完成提示里
+       * 带一句「原文已移除，如需保留请说明」，剩下的由你决定。
+       * 传 `null` = 「还是不优化了吧」——什么都不写，直接收气泡。
+       *
+       * **写回后必须复查**：DSH 的输入框是 contenteditable 富文本编辑器，
+       * 富文本编辑器会把「绕过它直接改 DOM」当外部脏数据在下一帧回滚 —— 所以
+       * 「已换成『更详细』那版」这句话可能是假的。这里读回来对一次，对不上就
+       * 把正文摊在气泡上让你能复制，同时明说没写进去，绝不假装成功。
+       */
+      api.pickVariant = function (variant) {
+        const opt = store.opt;
+        if (!opt || opt.kind !== 'pick') return;
+        if (variant === null || variant === undefined) {
+          pwBeacon('pick', 'skip');
+          commit({ opt: null, busy: false, undo: null });
+          if (api.startSpeech) api.startSpeech('嗯，不动它');
+          return;
+        }
+        pwBeacon('pick', variant.key || '?');
+        const box = opt.box;
+        const want = String(variant.optimized === null || variant.optimized === undefined ? '' : variant.optimized);
+        const wrote = writeComposer(box, want);
+        // 富文本编辑器回滚是异步的（下一帧 reconciliation），所以立刻读一次不够，
+        // 留一份「等一会儿再验」的定时器：两次都失败才算真失败。
+        const verify = function () {
+          const got = readComposer(box);
+          const good = got.trim() === want.trim();
+          pwBeacon('pick-write', variant.key + ' ok=' + (wrote && good));
+          if (good) {
+            // 成功写进去了：这是她唯一"有确切理由兴奋"的时刻（见 reactionStep 的 done 分支）
+            api.markOptimizeDone();
+            commit({
+              opt: {
+                kind: 'info',
+                // ⚠️ 这里**不能**再说"右键我可以撤销" —— 原文已经不再对你呈现了
+                //（v0.5.4 起），提一个不存在的入口就是在骗人。
+                text: '已换成「' + (variant.label || '优化') + '」那版。原文已移除，如需保留请说明'
+                  + (variant.rounds && variant.rounds > 1 ? '（迭代 ' + variant.rounds + ' 轮）' : '')
+                  + usageNote(variant.usage) + thinkingNote(variant.ms),
+                until: Date.now() + 6000,
+              },
+              busy: false,
+              // ⚠️ 原稿**仍然留在内存里**（userVisibleOriginal === false）：
+              //   显示层已经不再提供任何看/撤原文的入口，但这份数据留着，
+              //   万一以后要恢复对照/回退能力，不必重新设计数据结构。
+              //   它不进 undo 态 → 右键菜单、shouldDismissUndo 都碰不到它。
+              undo: null,
+            });
+            return;
+          }
+          // 没写进去：别装成功。正文直接摊在气泡上，够你点「复制」。
+          commit({
+            opt: {
+              kind: 'paste',
+              label: variant.label || '优化',
+              optimized: want,
+              until: 0,
+            },
+            busy: false,
+            undo: null,
+          });
+          if (api.startSpeech) api.startSpeech('这个框不让我写，我把正文放气泡上了，你复制一下');
+        };
+        if (readComposer(box).trim() === want.trim()) verify();
+        else setTimeout(verify, 120);
+      };
+
       /** 撤销：把原稿写回去，气泡一起收掉。 */
       api.undoOptimize = function () {
         const undo = store.undo;
         if (!undo) return;
         writeComposer(undo.el, undo.original);
         commit({ undo: null, opt: null, busy: false });
-        if (api.startSpeech) api.startSpeech('撤销了，还是你原来那版～');
+        if (api.startSpeech) api.startSpeech('换回来了');
       };
 
-      /** 关掉优化气泡（√ 撤销 / × 保留 / 「知道了」都会走到这）。 */
+      /** 关掉优化气泡（「关闭」/「知道了」/ pick 的「还是不优化了吧」都会走到这）。 */
       api.dismissOpt = function () {
         if (store.opt) commit({ opt: null });
+      };
+
+      /**
+       * 把一段文本塞进剪贴板：`navigator.clipboard` 优先，失败退回 `execCommand('copy')`。
+       *
+       * 后者在非 https 的本地源（127.0.0.1 之外的局域网地址）上才有，DSH 就是
+       * `http://127.0.0.1:19387`，clipboard API 偶尔会被权限策略挡掉。
+       * 回调 `(ok, why)`，**永不 reject**。
+       */
+      function writeClipboard(text, cb) {
+        const done = cb || function () {};
+        try {
+          if (typeof navigator !== 'undefined' && navigator.clipboard
+              && typeof navigator.clipboard.writeText === 'function') {
+            navigator.clipboard.writeText(text).then(function () { done(true); }, function (e) { done(false, e && e.message); });
+            return;
+          }
+        } catch (error) { /* 落到 execCommand */ }
+        try {
+          const doc = typeof document !== 'undefined' ? document : null;
+          const ta = doc && doc.createElement ? doc.createElement('textarea') : null;
+          if (ta && doc.body && doc.execCommand) {
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            doc.body.appendChild(ta);
+            ta.select();
+            const ok = doc.execCommand('copy');
+            doc.body.removeChild(ta);
+            done(!!ok);
+            return;
+          }
+        } catch (error2) { /* 落到失败 */ }
+        done(false, 'no-clipboard');
+      }
+
+      /**
+       * 把「写不进去那版」的正文复制走（paste 态的「复制」按钮）。
+       *
+       * 复制成功/失败**都要说清楚**，失败时正文继续摊着 —— 这一态存在的意义就是
+       * 「写不进框里，至少让你手动搬得走」，静默失败等于把最后一条路也堵死。
+       */
+      api.copyOptimized = function () {
+        const opt = store.opt;
+        if (!opt || opt.kind !== 'paste') return;
+        const text = String(opt.optimized || '');
+        writeClipboard(text, function (ok, why) {
+          pwBeacon('copy', ok ? 'ok' : ('fail:' + (why || '?')));
+          commit({
+            opt: {
+              kind: 'paste',
+              label: opt.label,
+              optimized: text,
+              until: Date.now() + (ok ? 4000 : 9000),
+              note: ok ? '复制好了，粘到框里就行～' : '复制没成功，手动选中下面这段也行',
+            },
+          });
+          if (api.startSpeech) api.startSpeech(ok ? '复制好了' : '复制没成，手动选中下面那段');
+        });
+      };
+
+      /**
+       * 只复制某一版，**不动文本框**（pick 每行右边那个「复制」）。
+       *
+       * 和「替换」分开：有时候框里那段还要留着对照，硬写进去就把原文顶掉了。
+       * 复制完气泡原样留着（kind/until 都不改），你还能接着选别的版本。
+       */
+      api.copyVariant = function (variant) {
+        const opt = store.opt;
+        if (!opt || opt.kind !== 'pick' || !variant) return;
+        const text = String(variant.optimized === null || variant.optimized === undefined ? '' : variant.optimized);
+        writeClipboard(text, function (ok, why) {
+          pwBeacon('copy-variant', (variant.key || '?') + (ok ? ' ok' : (' fail:' + (why || '?'))));
+          if (api.startSpeech) {
+            api.startSpeech(ok ? ('「' + (variant.label || '这版') + '」复制好了') : '复制没成，手动选中「看正文」里那段');
+          }
+        });
       };
 
       // ── 指针接线：全部转发给 pet-core，它自己判断命中与动作 ──────────────
@@ -1575,16 +2775,38 @@ window.__ModuleLoader__.load({
         if (!ctl) return;
         var press = api.press;
         api.press = null;
+        // 松手（含 pointercancel）：摘掉拖拽辉光，无论这次投没投递成功。
+        if (store.near) commit({ near: false });
         // ── 投递判定：确实拖动过 + 松手点落在文本框上 → 就地放下 + 优化 ──────
         // 「就地放下」用的是 pet-core 自带的 `dropAt()`（官方注释：no throw），
         // 所以她不会被甩飞出去——原样保留 vendor，不改上游一行。
         if (press && press.moved && event && typeof event.clientX === 'number') {
           const box = findComposer();
           const zone = box ? dropZone(box) : null;
-          if (zone && pointInRect({ x: event.clientX, y: event.clientY }, zone)
-            && typeof ctl.dropAt === 'function' && ctl.pressing) {
+          // 投递判定 = 指针在框上 **或鲸鱼身体压在框上**。
+          // 为什么必须看身体：拖拽时指针抓的是后颈（scruff），身体 pivot 挂在指针
+          // 下方约 220*S——用户看到她压在输入框上松手时，指针其实还在框上方。
+          // 只看指针会系统性 miss（2026-10-23 diag 三次 drop-miss 全是 box=DIV
+          // inside=false pressing=true 这个形状），每次 miss 还会触发抛飞，
+          // 落地又压框 → 回避逻辑把她往右赶 → 循环。
+          const pointerInside = isDropInside({ x: event.clientX, y: event.clientY }, zone);
+          const bodyInside = !!(lastPetRect && zone && rectsOverlap(lastPetRect, zone, 0));
+          const inside = pointerInside || bodyInside;
+          if (inside && typeof ctl.dropAt === 'function' && ctl.pressing) {
             try {
-              ctl.dropAt(localPoint(event));
+              // 落点：指针在框上就用指针（现有行为）；身体压住框而指针在框上方时，
+              // 落在身体当前 scruff 高度（pet.dy）——她站在框边地上，而不是被扔回框上方。
+              if (bodyInside && !pointerInside && ctl.pet) {
+                const s = stageEl.getBoundingClientRect();
+                const feetX = (lastPetRect.left + lastPetRect.right) / 2;
+                const pet = ctl.pet;
+                ctl.dropAt({
+                  x: feetX - s.left,
+                  y: typeof pet.dy === 'number' ? pet.dy : lastPetRect.bottom - s.top,
+                });
+              } else {
+                ctl.dropAt(localPoint(event));
+              }
               api.avoidUntil = Date.now() + 6000; // 站住别挡着你，先让开
               api.deliverToComposer(box);
             } catch (error) {
@@ -1594,10 +2816,34 @@ window.__ModuleLoader__.load({
             }
             return;
           }
+          // 拖了但没投递：**不能静默**。原来这里只记 diag，界面上一个字的提示都没有，
+          // 于是只能靠猜（2026-10-12 连撞 5 次 drop-miss 还以为功能没触发）。
+          pwBeacon('drop-miss', 'box=' + (box ? (box.tagName || '?') : 'null')
+            + ' inside=' + (!!inside) + ' pointer=' + pointerInside + ' body=' + bodyInside
+            + ' pressing=' + (!!ctl.pressing));
+          if (api.startSpeech) {
+            api.startSpeech(box
+              ? '诶…没放准，再往输入框那儿拖近一点'
+              : '诶…没找到能打字的地方，先点一下输入框');
+          }
         }
+        // 点一下（没拖动）= 戳她。**必须先记 wasHeld 再 pointerUp** —— pointerUp 会把
+        // pressing 清掉，事后再读永远是 false，被拎起来那条分支就成了死代码。
+        var wasHeld = !!ctl.pressing;
         try {
           ctl.pointerUp();
         } catch (error) { /* 忽略 */ }
+
+        if (press && !press.moved && typeof ctl.gesture === 'function') {
+          // 安静档不演"捂脸"这种大反应，只让她抬头看一眼；被拎起来时一律 brace
+          var name = wasHeld ? 'brace' : (store.style === 'quiet' ? 'peek' : 'peekaboo');
+          try {
+            if (ctl.gesture(name)) {
+              bumpAffinity(1);
+              pwBeacon('poke', name);
+            }
+          } catch (error2) { /* 手势失败不该影响松手 */ }
+        }
       };
 
       api.onPointerLeave = function () {
@@ -1622,7 +2868,9 @@ window.__ModuleLoader__.load({
         if (event.preventDefault) event.preventDefault();
         if (event.stopPropagation) event.stopPropagation();
         var menuW = 190;
-        var menuH = 280; // 7 项 + 亲密度头 + 分隔线
+        // 菜单高度只是用来把浮层**夹回屏幕内**的估算，所以宁可高估：低估会让最后几项
+        // 跑到屏幕外点不到（这菜单是往右下角长的，右下角最容易被切掉）。
+        var menuH = 400; // 10 项 + 亲密度头 + 两道分隔线
         commit({
           menu: {
             x: Math.round(Math.max(8, Math.min(event.clientX, window.innerWidth - menuW))),
@@ -1631,36 +2879,126 @@ window.__ModuleLoader__.load({
         });
       };
 
+      /**
+       * 「坐好」/「起来活动」的唯一入口（照 Minecraft 里那条 /sit 命令）。
+       *
+       * 定义在组件作用域而不是 useEffect 闭包里：菜单项在 effect 提前 return 时
+       * （初始化失败 / 测试环境没有真实 DOM）也必须还能用，绝不能变成 undefined。
+       *
+       * 坐着的时候必须同时压住**三样**东西，只关漫游是不够的：
+       *   1. pet-core 的自由漫游 → `setRoam('off')`，`decide()` 不再派活，
+       *      且 `sit` / `sleep` 到期不会自己站起来（pet-core 里都判了 `free`）；
+       *   2. 打字回避 → 每帧的 `avoidWhileTyping()` 会 `walkTo` 把你支开，
+       *      那正好是「坐好」的反面，所以坐着时它整段短路；
+       *   3. 自动台词 → 坐着还每隔一两分钟报价格太吵，改成偶尔冒一句闲话。
+       */
+      api.setSit = function (next) {
+        var want = !!next;
+        if (store.sit === want) return;
+        commit({ sit: want });
+        saveSit(safeStorage(), want);
+        var ctl = api.ctl;
+        if (!ctl) return;
+        // 心情基准与档位无关，只要 pet-core 在就得同步一次。
+        // （原来只在 setStyle / bumpAffinity 里同步，于是"刷新页面 + 你已经摸过她了"
+        //   这条最常见的路径上，pet-core 的 mood 还是 0，尾巴要摸到下一次互动才摇起来。）
+        if (typeof ctl.setMood === 'function') {
+          var pets0 = store.pets || 0;
+          ctl.setMood(Math.min(1, Math.log(1 + pets0) / Math.log(121)));
+        }
+        if (want) {
+          // 就地坐下：先打断可能正在进行的拖拽/空中姿态，再落 sit
+          ctl.act('sit');
+          ctl.setRoam('off');
+        } else {
+          ctl.act('stand');
+          ctl.setRoam('free');
+          // 起来之后重新给她派活，不然她会一直 idle 到下次手动指令
+          if (typeof ctl.holdRoam === 'function') ctl.holdRoam(0.1);
+        }
+        pwBeacon(want ? 'sit' : 'rise', 'sit=' + want);
+      };
+
       api.menuAction = function (kind) {
         commit({ menu: null });
         var ctl = api.ctl;
         var lines = roamLines(new Date());
-        if (kind === 'action') {
+        if (kind === 'sit' || kind === 'rise') {
+          // ★「坐好」是持续状态，不是动作：坐下 = roam 关掉 + sit 姿势 + 不许被打扰；
+          //   起来 = roam 打开 + stand。走哪一步都要落到 saveSit，刷新页面她还在原地。
+          api.setSit(kind === 'sit');
+          if (api.startSpeech) api.startSpeech(pickOne(kind === 'sit' ? lines.sit : lines.rise));
+        } else if (kind === 'action') {
           if (!ctl) return;
           ctl.holdRoam(5);
           ctl.act(pickOne(POSE_MOTIONS));
+        } else if (kind === 'play') {
+          // 「逗她玩」：从当前档位的候选池里随机抽一个手势。
+          // 坐着也能演 —— 坐着不该等于"什么都不能做"。
+          if (!ctl) return;
+          ctl.holdRoam(5);
+          api.playRandomGesture();
+        } else if (kind === 'style') {
+          // 三档活动强度循环切换。走 setStyle 是为了存本机 + 同步心情基准。
+          var tiers = ['quiet', 'daily', 'lively'];
+          var at = tiers.indexOf(store.style);
+          api.setStyle(tiers[(at + 1) % tiers.length]);
         } else if (kind === 'pet') {
           if (!ctl) return;
           ctl.holdRoam(4);
           ctl.setExpr('love', 2.5);
           bumpAffinity(1);
-        } else if (kind === 'say') {
-          if (api.startSpeech) api.startSpeech(pickOne(lines.price));
-        } else if (kind === 'quiet') {
+        } else if (kind === 'heart') {
+          // 撒爱心：让她站住看一眼（别被漫游抢走），头顶冒爱心，亲密度 +1。
           if (!ctl) return;
-          ctl.setRoam('off');
-          ctl.act('sit');
-          if (api.startSpeech) api.startSpeech('好…我安静一会儿');
+          ctl.holdRoam(3);
+          if (typeof ctl.emitHeart === 'function') ctl.emitHeart();
+          bumpAffinity(1);
+        } else if (kind === 'expr') {
+          // 换个表情：在表情池里循环取下一个（当前表情优先），保持 2 秒后自动回落。
+          if (!ctl || typeof ctl.setExpr !== 'function') return;
+          var exprPool = (PET && Array.isArray(PET.EXPRESSIONS)) ? PET.EXPRESSIONS
+            : ['neutral', 'happy', 'wink', 'love', 'shy', 'surprised', 'angry', 'sad', 'sleepy', 'thinking'];
+          var exprNow = 'neutral';
+          try { exprNow = (ctl.pet && ctl.pet.expr) || 'neutral'; } catch (exprErr) { exprNow = 'neutral'; }
+          var exprAt = exprPool.indexOf(exprNow);
+          if (exprAt < 0) exprAt = 0;
+          ctl.setExpr(exprPool[(exprAt + 1) % exprPool.length], 2);
+        } else if (kind === 'care') {
+          // 不谈 token、不谈钱，就问你一句。她是这个插件里唯一会这么说话的部分。
+          if (!ctl) return;
+          // love 表情 = 爱心眼，是现有表情里最贴"在乎你"的那个；v0.5.0 没有新表情。
+          ctl.setExpr('love', 3);
+          ctl.holdRoam(4);
+          if (api.startSpeech) api.startSpeech(pickOne(lines.care));
         } else if (kind === 'roam') {
           if (!ctl) return;
+          // 自由活动 = 明确解除「坐好」，两者是互斥的持续状态。
+          if (store.sit) api.setSit(false);
           ctl.setRoam('free');
           if (api.startSpeech) api.startSpeech(pickOne(lines.greet));
         } else if (kind === 'home') {
           if (!ctl) return;
+          // 坐好时"回家" = 走回家然后继续坐着，不是解除坐姿。
+          // （用户点"回家"是想换地方，不是想让她重新开始乱跑。）
           ctl.holdRoam(3);
           ctl.walkTo(HOME_X, false);
+          if (api.startSpeech && !store.sit) api.startSpeech('我回家啦');
+        } else if (kind === 'optimize') {
+          // 右键菜单「优化提示词」：不依赖拖拽检测，直接找输入框投递。
+          // 这是「拖过去没反应」的可靠兜底——点一下菜单就优化。
+          var box = findComposer();
+          if (box) {
+            pwBeacon('menu-optimize', 'box=' + (box.tagName || '?'));
+            api.deliverToComposer(box);
+          } else {
+            pwBeacon('menu-optimize', 'no-composer');
+            if (api.startSpeech) api.startSpeech('没找到能打字的地方，先点一下输入框');
+          }
         } else if (kind === 'undo') {
-          // 胶囊已经被你改字/超时收掉了也还能撤 —— 原稿一直留着
+          // ⚠️ v0.5.4：菜单里已没有这一项，也没有别的入口能发出 'undo'。
+          //   分支与 api.undoOptimize 一起留着 —— 恢复对照/回退能力时接回去即可，
+          //   而现在删掉它们等于把恢复成本从"接回去"抬到"重做一遍"。
           api.undoOptimize();
         }
       };
@@ -1675,6 +3013,12 @@ window.__ModuleLoader__.load({
         var speech = null;
         var nextSpeechAt = 0;
         var unlockSfx = null;
+        /**
+         * 音效句柄。**必须**声明在 effect 这一层，不能留在异步 init 闭包里：
+         * `driveReactions` 的呼噜与 `cueSound` 都在 effect 作用域，看不见 init 的局部变量。
+         * 顺带这也保证了卸载后 sfx 仍可被读到（init 早退时它是 null，两处都有 `if (sfx)` 兜底）。
+         */
+        var sfx = null;
         var onResize = null;
         var stageEl = stageRef.current;
         var petEl = petRef.current;
@@ -1701,6 +3045,155 @@ window.__ModuleLoader__.load({
         var lastPetRect = null;
         /** 上一次下达的走位目标：目标没变就绝不重复 walkTo（否则步态会被重置成原地踏步）。 */
         var escape = { target: null };
+        // ── 拖拽时的「靠近输入框」辉光反馈 ──────────────────────────────────
+        /** 上一次查「离输入框多近」的时刻（节流用）。 */
+        var nearCheckAt = 0;
+        /**
+         * 拖拽时判断她离输入框有多近：取她身体包围盒到**最近**输入框的最近边距离，
+         * 小于 NEAR_COMPOSER_PX 就打开辉光 class —— 「再拖近一点就能投递」有了肉眼
+         * 可见的反馈（原来只有松手后才知道够不够近）。
+         *
+         * 只用最近一次 layout() 存的身体矩形，不在拖拽中再读布局；只在真正拖动
+         * （press.moved）时调用。松手由组件体的 onPointerUp 摘掉，卸载由 effect 的
+         * 清理函数摘掉（两处都直接 commit near:false，effect 里的局部状态不跨作用域）。
+         */
+        function updateNearComposer(now) {
+          // 拖拽时每帧都可能触发 pointermove，查 DOM 有成本：节流到 ~80ms 一次足够。
+          // event.timeStamp 在老浏览器里可能从 0 开始，所以非正数一律退回 Date.now()。
+          var t = typeof now === 'number' && isFinite(now) && now > 0 ? now : Date.now();
+          if (t - nearCheckAt < 80) return;
+          nearCheckAt = t;
+          try {
+            if (!lastPetRect) return;
+            var nodes = (typeof document !== 'undefined' && document.querySelectorAll)
+              ? document.querySelectorAll('textarea, input, [contenteditable]')
+              : [];
+            var best = Infinity;
+            for (var i = 0; i < nodes.length; i += 1) {
+              var el = nodes[i];
+              if (!isEditable(el)) continue;
+              var zone = dropZone(el);
+              if (!zone) continue;
+              var d = rectDistance(lastPetRect, zone);
+              if (d < best) best = d;
+            }
+            var near = best < NEAR_COMPOSER_PX;
+            if (near === store.near) return;
+            commit({ near: near });
+          } catch (error) {
+            // 视觉反馈失败绝不能影响拖拽主流程。
+          }
+        }
+        // ── 场景反应 / 待机 ──────────────────────────────────────────────
+        /** 你最后一次有输入的时刻（键盘、鼠标、滚轮都算）。判定"你还在不在"用。 */
+        var lastInputAt = Date.now();
+        /** 场景反应状态机的上一次结果；纯状态，跨帧保留。 */
+        var reactState = null;
+        /** 优化刚跑完的那一刻，消费掉就置 0（只用一次）。 */
+        var doneAt = 0;
+        /** 下一轮"她想自己动一动"的时间戳（毫秒）。0 = 现在就想动。 */
+        var nextIdleGestureAt = 0;
+        /** 下一声呼噜的时间戳（毫秒）。0 = 还没排上。 */
+        var nextPurrAt = 0;
+
+        /** 任何输入都续上"你还在线"的窗口。 */
+        function markInput() { lastInputAt = Date.now(); }
+
+        /** 优化成功写入后由组件体调用：给"她该蹦一下"这件事一个确切时刻。 */
+        api.markOptimizeDone = function () { doneAt = Date.now(); };
+        // 组件体（摸头 / 逗她玩 / 换档）要放一次性音效，但 sfx 只活在 effect 里，
+        // 所以这里挂一个转发口 —— 组件体不直接碰 sfx，避免闭包外的空引用。
+        api.cueSound = cueSound;
+
+        /**
+         * 每帧驱动：场景反应（你回来/打字太久/久无动静）+ 待机小动作。
+         *
+         * 为什么要限流：她有自己的想法，但你的注意力比她的想法重要。
+         * 所以这里有两道闸：动作**不打断**你正在做的事（optimize 气泡在位时不演），
+         * 以及一个独立的"下一轮自己动"时钟，免得每隔几秒就跳一下。
+         */
+        function driveReactions(now) {
+          if (!ctl) return;
+          var tier = styleTier(store.style);
+          // 坐好 = 你说了别动。坐着可以演小动作（她还是活的），但绝不能自己睡过去。
+          var canAct = !store.opt && !store.busy;
+
+          var plan = reactionStep(reactState, {
+            now: now,
+            inputAt: lastInputAt,
+            sitting: store.sit,
+            typing: typingActive(editableAncestor(typeof document !== 'undefined' ? document.activeElement : null), typingUntil, now),
+            justDone: doneAt != null && (now - doneAt) < 1500,
+            tier: tier,
+          });
+          reactState = plan.state || reactState;
+          doneAt = 0;
+
+          // 坐好过期：**不受 canAct 限制**。
+          // 这是状态修正，不是表演 —— 就算你正开着优化气泡、她正忙着，
+          // 10 分钟没人管就得起身；把它压在 canAct 里等于"忙着就一直坐着"，
+          // 而"坐好"本来的承诺是"一直坐到起来活动"，不是"一直坐到下次优化结束"。
+          if (plan.rise) {
+            api.setSit(false);
+            if (plan.say && api.startSpeech) api.startSpeech(pickOne(roamLines(new Date()).react.rise));
+            return;
+          }
+
+          if (canAct) {
+            if (plan.sleep) {
+              ctl.act('sleep');
+              if (api.startSpeech) api.startSpeech(pickOne(roamLines(new Date()).react.idle));
+            } else if (plan.gesture && !store.sit) {
+              if (ctl.gesture(plan.gesture)) {
+                if (plan.say) api.startSpeech(pickOne(roamLines(new Date()).react[plan.say.split('.').pop()]));
+              }
+            }
+          }
+
+          // 待机小动作：她没事干的时候自己伸个懒腰、抖抖毛
+          if (canAct && tier.idleGestures > 0 && !store.sit && (ctl.pet.mode === 'idle')) {
+            if (!nextIdleGestureAt) nextIdleGestureAt = now + styleDelay(tier.idleMs, tier.tempo) * 1000;
+            else if (now >= nextIdleGestureAt) {
+              nextIdleGestureAt = 0;
+              var pool = tier.motions.filter(function (m) { return m !== 'beg' && m !== 'swat' && m !== 'brace'; });
+              var name = pickGesture(pool, null);
+              if (name && ctl.gesture(name)) nextIdleGestureAt = now + styleDelay(tier.idleMs, tier.tempo) * 1000;
+            }
+          } else if (store.sit || !canAct) {
+            nextIdleGestureAt = 0;
+          }
+
+          /**
+           * 闲着的时候的零碎声音。
+           *
+           * 这些音效方法上游写好了却从来没被调用过（purr / sparkle / pop / select），
+           * 所以是白捡的 —— 不用新增任何音频代码，只是把它们放对地方：
+           *   purr    坐着且心情不错 → 呼噜（隔一阵一声，别连成一片）
+           *   sparkle 心情明显涨上去 → 小星星
+           *   pop     换档 / 升级这类"状态变了"的一瞬间
+           *
+           * 全都过 `sfx &&`，因为没有音频上下文的环境（测试、静音）里它是空的。
+           */
+          if (sfx && typeof sfx.purr === 'function') {
+            if (!nextPurrAt) nextPurrAt = now + 9000;
+            else if (now >= nextPurrAt) {
+              nextPurrAt = now + 14000 + Math.random() * 14000;
+              // 只有"她真的在那儿待着"才呼噜：被拎着 / 睡着 / 忙着都不该有
+              var settled = ctl.pet && (ctl.pet.mode === 'sit' || ctl.pet.mode === 'idle');
+              if (settled && (store.sit || now - lastInputAt > 6000)) {
+                try { sfx.purr(); } catch (error) { /* 音效失败不该影响界面 */ }
+              }
+            }
+          }
+        }
+
+        /** 心情涨上去 / 状态变化时的一次性音效（换档、升级、逗她玩成功）。 */
+        function cueSound(kind) {
+          if (!sfx) return;
+          var fn = sfx[kind];
+          if (typeof fn !== 'function') return;
+          try { fn(); } catch (error) { /* 音效失败不该影响界面 */ }
+        }
 
         /** 当前回避区：优先正在聚焦的文本框，其次最近打字的那个。 */
         function activeZone() {
@@ -1708,13 +3201,26 @@ window.__ModuleLoader__.load({
           return editableZone(editableAncestor(focused) || api.composer);
         }
 
+        /**
+         * 打字 / 失焦时给鲸鱼娘接上「竖耳听」状态（第二档 #8）。
+         * pet-core 没这个能力时静默跳过 —— 接线失败绝不能影响打字回避主流程。
+         */
+        function setListening(on) {
+          if (ctl && typeof ctl.setListening === 'function') {
+            try { ctl.setListening(!!on); } catch (error) { /* 忽略 */ }
+          }
+        }
+
         /** 打字（含把焦点点进文本框）就续上回避窗口；只读事件，不 preventDefault。 */
         function onTyping(event) {
+          markInput();
           var box = editableAncestor(event && event.target !== undefined ? event.target : null);
           if (box) api.composer = box;
           var focused = typeof document !== 'undefined' ? document.activeElement : null;
           if (box || editableAncestor(focused)) {
             typingUntil = Date.now() + TYPING_GRACE_MS;
+            // 你正在输入框里：她竖耳听。
+            setListening(true);
           }
         }
 
@@ -1722,6 +3228,8 @@ window.__ModuleLoader__.load({
         function onFocusOut(event) {
           if (editableAncestor(event && event.target)) {
             typingUntil = Math.min(typingUntil, Date.now() + 600);
+            // 你不在输入框了：竖耳听收掉。
+            setListening(false);
           }
         }
 
@@ -1740,7 +3248,13 @@ window.__ModuleLoader__.load({
               // 优化气泡 / 撤销对话框在位时不自动抢台词（两个气泡会叠一起）
               if (!store.opt) {
                 var lines = roamLines(new Date());
-                api.startSpeech(Math.random() < 0.75 ? pickOne(lines.price) : pickOne(lines.idle));
+                // 台词轮换。价格**不再是菜单里的一个按钮**（v0.5.3 去掉「说句价格」），
+                // 而是并进待机池：她自己在待机时报一句，比你专门点一下要自然得多。
+                // 坐着的时候少报一点价 —— 你让她安静待着，她还老报"谷时便宜一半"太吵。
+                var pool = store.sit
+                  ? (Math.random() < 0.18 ? lines.price : pickOne(lines.sitIdle))
+                  : (Math.random() < 0.55 ? pickOne(lines.price) : pickOne(lines.idle));
+                api.startSpeech(typeof pool === 'string' ? pool : pickOne(pool));
               }
               nextSpeechAt = now + SPEECH_MIN_MS + Math.random() * (SPEECH_MAX_MS - SPEECH_MIN_MS);
             }
@@ -1782,11 +3296,10 @@ window.__ModuleLoader__.load({
             optRef.current.style.left = a2.x + 'px';
             optRef.current.style.top = a2.y + 'px';
           }
-          // 你自己改过提示词 → 撤销就该自己收起来：绝不能拿旧稿盖掉你的新输入
-          if (store.undo && shouldDismissUndo(store.undo, readComposer(store.undo.el), Date.now())) {
-            commit({ undo: null, opt: null });
-          }
-          // 到期自动收起：只剩失败说明（8 秒）。撤销询问**不设消失时间**，一直等你选。
+          // v0.5.4 起 store.undo 恒为 null（选版时不再留撤销态），所以"你改过提示词
+          // 就自动收起撤销"这条规则已经没有触发场景，这里把调用点去掉，别留死分支。
+          // shouldDismissUndo 本身仍在（纯函数、仍有测试），将来要恢复对照/回退时直接接回去。
+          // 到期自动收起：失败说明（8 秒）与「无改动」提示（6 秒）。
           if (store.opt && store.opt.until && Date.now() > store.opt.until) {
             commit({ opt: null });
           }
@@ -1808,6 +3321,12 @@ window.__ModuleLoader__.load({
          */
         function avoidWhileTyping() {
           if (!ctl) return;
+          // ★ 坐好 = 你明确说了「别动」。这时连打字回避都不许把她支走——
+          //   否则你让她坐下、转头打字，她立刻自己跑开，那这个功能等于没做。
+          if (store.sit) {
+            escape.target = null;
+            return;
+          }
           var focused = typeof document !== 'undefined' ? document.activeElement : null;
           var now = Date.now();
           var active = typingActive(editableAncestor(focused), typingUntil, now)
@@ -1817,9 +3336,19 @@ window.__ModuleLoader__.load({
             return;
           }
           ctl.holdRoam(0.5);
-          var target = escapePlan(lastPetRect, activeZone(), window.innerWidth);
+          var target = escapePlan(lastPetRect, activeZone(), window.innerWidth, ctl.pet ? ctl.pet.x : null);
           if (target === null) {
             escape.target = null;
+            return;
+          }
+          // ★ 已经在走（walk/run）且目标没大变：**别重新下令**。
+          //   走姿会让 DOM 包围盒晃动（lean 旋转 + bob 缩放），每帧重算的目标
+          //   抖动超过容差就会 walkTo 重置步态 —— 她原地踏步，看着"一直向右边
+          //   走不动"。这条守卫让她稳稳走到位；到了之后（idle）再重算，
+          //   如果还压着框就换个目标继续走。
+          var isWalking = ctl.pet && (ctl.pet.mode === 'walk' || ctl.pet.mode === 'run');
+          if (isWalking && escape.target !== null
+            && Math.abs(target - escape.target) <= AVOID_TARGET_TOLERANCE * 2) {
             return;
           }
           if (escape.target !== null && Math.abs(target - escape.target) <= AVOID_TARGET_TOLERANCE) return;
@@ -1828,6 +3357,21 @@ window.__ModuleLoader__.load({
           if (ctl.walkTo(target, Math.abs(target - center) > AVOID_RUN_DISTANCE)) {
             escape.target = target;
           }
+        }
+
+        /**
+         * 坐好期间每帧确认她还坐着。
+         *
+         * 为什么需要：她被拎起来/被抛出去再放下，走的是 `air → land → idle`
+         * （pet-core 的 land() 不看 roam），落地就站起来了 —— 但 `store.sit` 还是 true，
+         * 于是菜单上写着"坐好"、实际站着不再坐回去，出现"命令失效"。
+         * 这里只在**落地静止**时补一次 `act('sit')`，不影响空中与行走的手感。
+         */
+        function keepSitting() {
+          if (!ctl || !store.sit) return;
+          var mode = ctl.pet && ctl.pet.mode;
+          if (mode !== 'idle') return; // sit / sleep / wake / walk 都放行
+          if (ctl.act('sit')) pwBeacon('sit-restore', 'mode=' + mode);
         }
 
         function loop(now) {
@@ -1841,6 +3385,8 @@ window.__ModuleLoader__.load({
             ctl.render();
             layout();
             avoidWhileTyping();
+            keepSitting();
+            driveReactions(now);
             speak(now);
           } catch (error) {
             if (!warned) {
@@ -1858,11 +3404,13 @@ window.__ModuleLoader__.load({
          */
         function onPointerMove(event) {
           if (!ctl) return;
+          markInput();
           // 拖动阈值与 pet-core 一致（>6px 才算 drag）：松手时靠它判断是不是「拖过来的」
           if (api.press && typeof event.clientX === 'number') {
             if (Math.abs(event.clientX - api.press.x) > 6 || Math.abs(event.clientY - api.press.y) > 6) {
               api.press.moved = true;
             }
+            if (api.press.moved) updateNearComposer(event.timeStamp);
           }
           var cursor = '';
           try {
@@ -1883,7 +3431,7 @@ window.__ModuleLoader__.load({
               if (figure && figure.dispose) figure.dispose();
               return;
             }
-            var sfx = PET.createSfx({ storageKey: SOUND_KEY });
+            sfx = PET.createSfx({ storageKey: SOUND_KEY });
             unlockSfx = function () {
               if (sfx && typeof sfx.unlock === 'function') sfx.unlock();
             };
@@ -1908,10 +3456,35 @@ window.__ModuleLoader__.load({
                 onEvent: function (kind) {
                   // 一切发生在身体上的事（拎起 / 放下 / 抛出 / 戳 / 摸 / 摔晕）都算互动
                   if (kind === 'touch') bumpAffinity(1);
+                  // 走到位了：清掉上一次的回避目标。下一帧如果还压着框
+                  // （目标算错/被钳位），avoidWhileTyping 会重新算并再走一次；
+                  // 不清的话她会一直被"已经在朝这个目标走"的守卫钉在原地。
+                  if (kind === 'arrived') escape.target = null;
                 },
               },
             );
             api.ctl = ctl;
+            api.figure = figure;
+            // 配色（第二档 #6）：优先用 Host 设置里存的，没有就回本机存档，再不行用默认。
+            // 走 api.applyPalette 而不是直接 setSkin —— 只有那条路会同步改特效主色
+            // （竖耳弧 / 思考气泡 / 睡 z），皮肤对象自己改是看不到效果的。
+            api.applyPalette(uiSettings.palette || loadPalette(safeStorage()));
+            // 活力度：手动存过就用用户拖的值，否则按亲密度换算（刷新页面后尾巴照样摇）。
+            if (!whaleMood.manual) whaleMood.value = moodFromPets(store.pets || 0);
+            // 心情基准在这里也同步一次（而不是只在互动/换档/坐好切换时）：
+            // 那三条都是"状态变化"，而**刷新页面**不是变化 —— 不在这里补一次的话，
+            // 「上次摸过她了、这次刚打开 DSH」会一直停在 mood=0，直到你再摸她一下。
+            if (typeof ctl.setMood === 'function') {
+              try { ctl.setMood(whaleMood.value); } catch (error) { /* 忽略 */ }
+            }
+            // 上次会话她是被"坐好"的：初始化就让她坐下，别先站两秒再自己坐。
+            // 走的是 setSit 的同一条路径，只是绕过 store 比较（状态本来就是 true）。
+            if (store.sit) {
+              try {
+                ctl.act('sit');
+                ctl.setRoam('off');
+              } catch (error) { /* 忽略 */ }
+            }
             // 浏览器要求先有用户手势才允许出声；捕获阶段挂，任何点击都能解锁
             window.addEventListener('pointerdown', unlockSfx, true);
             window.addEventListener('keydown', unlockSfx, true);
@@ -1940,6 +3513,8 @@ window.__ModuleLoader__.load({
           alive = false;
           api.ctl = null;
           api.startSpeech = null;
+          // 卸载时把拖拽辉光摘掉，别让 class 留在已经消失的 DOM 上。
+          if (store.near) commit({ near: false });
           if (raf && typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(raf);
           if (onResize) window.removeEventListener('resize', onResize);
           window.removeEventListener('pointermove', onPointerMove);
@@ -2003,21 +3578,35 @@ window.__ModuleLoader__.load({
             ),
             h('hr'),
             item('action', '换个姿势'),
+            // 「逗她玩」走的是手势层（叠加在当前姿势之上），所以她坐着也能演。
+            item('play', '逗她玩'),
             item('pet', '摸摸头'),
-            item('say', '念句价格'),
+            item('heart', '撒爱心'),
+            item('expr', '换个表情'),
+            item('care', '陪我说句话'),
             item('home', '回家'),
+            item('optimize', '优化提示词'),
             h('hr'),
-            item('quiet', '安静一会儿'),
+            // ★「坐好」= 持续状态（照 Minecraft 里狗的 sit 命令）：坐下就一直不动，
+            //   菜单这一项跟着状态翻转，所以永远显示"你点了会发生什么"。
+            store.sit ? item('rise', '起来活动') : item('sit', '坐好'),
+            // 活动强度档：显示当前档 + 点一下切到下一档，所以不用进设置页也能改。
+            item('style', '活泼程度：' + styleTier(store.style).name),
             item('roam', '自由活动'),
-            store.undo ? h('hr', { key: 'hr2' }) : null,
-            store.undo ? item('undo', '撤销提示词优化') : null,
+            // ⚠️ v0.5.4：这里**不再有**「撤销提示词优化」。
+            //   优化完直接给出改写后的正文，不呈现原稿、不再问你要不要回退。
+            //   （api.undoOptimize 仍留着，只是不再有任何入口能触发它。）
           ),
         );
       }
 
       // ── 优化胶囊：贴在文本框上方，是这块浮层里唯一会自己挪窝的 UI ──────────
       // ── 优化气泡 / 撤销对话框：挂在小鲸鱼头顶，位置每帧由 rAF 钉着 ──────────
-      // busy：一句「正在优化提示词中…」；done：√/× 撤销询问（不设消失时间）；error：原因 + 知道了。
+      // busy：「正在优化提示词中…」（无按钮）；
+      // pick：三版三行，整行=替换、行内「复制」只复制、底部「还是不优化了吧」/「关闭」
+      //       （对话框语义，不设消失时间，等你选）；
+      // paste：写不进框时摊正文 + 复制 / 关闭；info：无改动说明（6 秒自收）；
+      // error：原因 + 「知道了」（8 秒自收）。
       // 拖着她跑的时候，这个气泡跟她的头顶一起走（layout() 里每帧对齐 anchor）。
       var optEl = null;
       if (store.opt) {
@@ -2028,34 +3617,129 @@ window.__ModuleLoader__.load({
             className: 'pw-opt',
             'data-kind': optKind,
             ref: optRef,
-            role: optKind === 'done' ? 'dialog' : 'status',
-            'aria-label': optKind === 'done' ? '是否撤销提示词优化' : store.opt.text,
+            role: optKind === 'pick' ? 'dialog' : 'status',
+            'aria-label': optKind === 'pick' ? '选择一版优化后的提示词' : store.opt.text,
             onClick: function (event) {
               // 气泡自己不吞点击语义，但别让它一路冒泡到浮层
               if (event && event.stopPropagation) event.stopPropagation();
             },
           },
-          h('span', { className: 'pw-opt-text' }, store.opt.text),
-          optKind === 'done'
-            ? h('span', { className: 'pw-opt-ask' }, store.opt.ask)
-            : null,
-          optKind === 'done'
-            ? h(
-                'span',
-                { className: 'pw-opt-actions' },
-                h('button', { key: 'yes', type: 'button', className: 'pw-opt-yes', title: '撤销，换回原文', onClick: api.undoOptimize }, '√'),
-                h('button', { key: 'no', type: 'button', className: 'pw-opt-no', title: '保留优化结果', onClick: api.dismissOpt }, '×'),
-              )
-            : null,
+          optKind === 'pick'
+            ? [
+              h('span', { key: 't', className: 'pw-opt-text' }, '优化好了，选哪一版？'),
+              h(
+                'div',
+                { key: 'list', className: 'pw-opt-pick' },
+                (store.opt.variants || []).map(function (v) {
+                  // ★ 一行 = 一版，整行是「替换」（写回框里），右边那个是「只复制」。
+                  //   点整行的语义就是替换 —— 这是最常用的动作，也是「点一下就用上」的直觉。
+                  //   想留个对照组（框里原文先不丢）就走「复制」，别把两件事挤在一个按钮上。
+                  const ms = formatThinking(v.ms);
+                  return h(
+                    'div',
+                    { key: v.key, className: 'pw-opt-pick-row' },
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'pw-opt-pick-btn',
+                        title: '把框里原文换成这一版' + (v.unchanged ? '（与原文相同）' : ''),
+                        onClick: function () { api.pickVariant(v); },
+                      },
+                      h('span', { className: 'pw-opt-pick-label' }, v.label),
+                      // ★ 字数 / 耗时注脚：抓没抓好、这版到底跑没跑上游，一眼看得见。
+                      //   2026-10-12「抓取没抓好」之所以查不出来，就是因为界面上只有三个标签，
+                      //   看不出回来的正文是空的、被截断的还是完整的。
+                      h('span', { className: 'pw-opt-pick-len' }, String(v.optimized || '').length + ' 字'),
+                      // 缓存命中那版没有 ms → 空串，不写「0.0s」（那是编数据）
+                      ms ? h('span', { className: 'pw-opt-pick-ms' }, ms) : null,
+                      (v.rounds && v.rounds > 1) ? h('span', { className: 'pw-opt-pick-note' }, '迭代 ' + v.rounds + ' 轮') : null,
+                      v.unchanged ? h('span', { className: 'pw-opt-pick-note' }, '无改动') : null,
+                      h('span', { className: 'pw-opt-pick-act' }, '替换'),
+                    ),
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'pw-opt-pick-copy',
+                        title: '只复制这一版，不动框里原文',
+                        onClick: function () { api.copyVariant(v); },
+                      },
+                      '复制',
+                    ),
+                  );
+                }),
+              ),
+              // 底部动作：不优化（什么都不写）/ 关闭（同样什么都不写，只是收气泡）。
+              // 两个都给：一个是"我决定不要"，一个是"我先关掉待会儿再说"，语气不同。
+              h(
+                'div',
+                { key: 'acts', className: 'pw-opt-actions' },
+                h(
+                  'button',
+                  { type: 'button', className: 'pw-opt-pick-skip', onClick: function () { api.pickVariant(null); } },
+                  '还是不优化了吧',
+                ),
+                h(
+                  'button',
+                  { key: 'close', type: 'button', className: 'pw-opt-close', onClick: api.dismissOpt },
+                  '关闭',
+                ),
+              ),
+              // 看正文：被截断、被代码块包住、混进标题时，当场就能发现
+              h(
+                'details',
+                { key: 'preview', className: 'pw-opt-preview' },
+                h('summary', null, '看正文'),
+                (store.opt.variants || []).map(function (v) {
+                  return h(
+                    'div',
+                    { key: v.key, className: 'pw-opt-preview-item' },
+                    h('div', { className: 'pw-opt-preview-label' }, v.label),
+                    h('pre', { className: 'pw-opt-preview-body' }, String(v.optimized || '')),
+                  );
+                }),
+              ),
+            ]
+            : optKind === 'paste'
+            ? [
+              h('span', { key: 't', className: 'pw-opt-text' },
+                '唔…这个框不让我写进去，我把「' + (store.opt.label || '优化') + '」那版正文放这了，你复制一下'),
+              h('pre', { key: 'body', className: 'pw-opt-paste-body' }, String(store.opt.optimized || '')),
+              h(
+                'div',
+                { key: 'acts', className: 'pw-opt-actions' },
+                // 复制成功/失败都要回话：note 是唯一的反馈位，静默失败等于把最后一条路堵死
+                store.opt.note ? h('span', { className: 'pw-opt-paste-note' }, store.opt.note) : null,
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'pw-opt-copy',
+                    onClick: function () { api.copyOptimized(); },
+                  },
+                  '复制',
+                ),
+                h(
+                  'button',
+                  { key: 'close', type: 'button', className: 'pw-opt-close', onClick: api.dismissOpt },
+                  '关闭',
+                ),
+              ),
+            ]
+            : h('span', { className: 'pw-opt-text' }, store.opt.text),
           optKind === 'error'
             ? h('button', { key: 'close', type: 'button', className: 'pw-opt-close', onClick: api.dismissOpt }, '知道了')
             : null,
         );
       }
 
+      // petVisible=false：整层隐身（visibility:hidden），但组件照常挂载、
+      // rAF 循环照常跑 —— 关掉再打开无需重新初始化 WebGL/精灵。
+      var petHidden = !!(uiSettings && uiSettings.petVisible === false);
       return h(
         'div',
-        { className: 'pw-roam', 'data-ready': store.ready ? '1' : '0' },
+        { className: 'pw-roam' + (petHidden ? ' is-hidden' : '') + (store.near ? ' is-near-composer' : ''), 'data-ready': store.ready ? '1' : '0' },
         h(
           'svg',
           { className: 'pw-stage', ref: stageRef, 'aria-hidden': 'true' },
@@ -2084,6 +3768,50 @@ window.__ModuleLoader__.load({
     //  设置页（设置 → 插件 → 小鲸鱼）
     // ============================================================================
     /** 详情页模式的说明文案。 */
+    /**
+     * 「提示词风格」那一行（系统提示词底稿）。
+     *
+     * 选项全部来自 Host 回传的 `ui.promptStyles`；Host 没给（比如旧版 Host）就
+     **整行不渲染** —— 显示一个空的单选组比不显示更糟，那会让人以为功能坏了。
+     * 这里绝不内置风格名或"暂无更多风格"之类的占位说法：清单没定就是没定。
+     */
+    function promptStyleRow(ui, applyPatch) {
+      var list = ui && Array.isArray(ui.promptStyles) ? ui.promptStyles : null;
+      if (!list || list.length === 0) return null;
+      var current = (ui && ui.promptStyle) || 'default';
+      // 当前 id 不在清单里（Host 升级后换了清单）：认第一个，别静默显示成别的。
+      if (!list.some(function (s) { return s.id === current; })) current = list[0].id;
+      // applyPatch 由 PeakWhaleSettingsTab 传进来（它才有 publish/save + 报错提示）
+  var apply = applyPatch || function () {};
+      return h(
+        'div',
+        { className: 'pw-set-field' },
+        h('span', { className: 'pw-set-label' }, '提示词风格'),
+        h(
+          'div',
+          { className: 'pw-set-modes' },
+          list.map(function (s) {
+            var active = s.id === current;
+            return h(
+              'label',
+              { key: s.id, className: 'pw-set-mode' + (active ? ' is-on' : '') },
+              h('input', {
+                type: 'radio',
+                name: 'pw-prompt-style',
+                checked: active,
+                onChange: function () {
+                  if (!active) apply({ promptStyle: s.id });
+                },
+              }),
+              h('span', { className: 'pw-set-mode-name' }, s.name),
+              s.note ? h('span', { className: 'pw-set-mode-note' }, s.note) : null,
+            );
+          }),
+        ),
+        h('p', { className: 'pw-dim' }, '风格是提示词的整份底稿；「更详细 / 更专业 / AI 自主」那三版仍各自照原样叠加在上面。换风格只换底稿，不改那三版的取向。'),
+      );
+    }
+
     var UI_MODES = [
       { id: 'detailed', name: '详细版', note: '完整价格表、时段规则与节假日说明。' },
       { id: 'concise', name: '简洁版', note: '只显示余额、今日费用与当前峰谷及持续时间。' },
@@ -2105,6 +3833,21 @@ window.__ModuleLoader__.load({
       var setError = errorState[1];
       var error = errorState[0];
       var mode = ui && ui.uiMode === 'detailed' ? 'detailed' : 'concise';
+      // 活动强度档只存在本机（localStorage），不走 Host —— 它跟你换台机器、
+      // 换个 profile 都无关，是这台机器上你跟她的相处方式。
+      var styleState = react.useState(function () { return loadStyle(safeStorage()); });
+      var style = styleState[0];
+      var setStyle = styleState[1];
+      // 配色（第二档 #6）：优先用 Host 设置里存的（跨设备同步），没有就回本机存档。
+      var paletteState = react.useState(function () {
+        return ui && ui.palette ? ui.palette : loadPalette(safeStorage());
+      });
+      var palette = paletteState[0];
+      var setPalette = paletteState[1];
+      // 亲密度与活力度是**桌宠侧**的状态（存在本机），设置页订阅它们的镜像。
+      var whale = useWhaleAffinity();
+      var mood = useWhaleMood();
+      var progress = affinityProgress(whale.pets);
 
       /** 乐观更新 + 写回 Host；失败亮出来（下一轮 wallet 轮询会用 Host 的值纠正显示）。 */
       var applyPatch = function (patch) {
@@ -2115,6 +3858,30 @@ window.__ModuleLoader__.load({
           setSaving(false);
           if (!ok) setError('设置保存失败——Host 半身可能还是旧版，重启 DSH 或稍后重试。');
         });
+      };
+
+      /**
+       * 换档。走 `api.setStyle` 而不是直接 commit —— 只有那条路会写本机、
+       * 同步心情基准，并**立刻**让正在跑的那个鲸鱼娘知道新档位。
+       */
+      var changeStyle = function (id) {
+        var api = exports.__whaleApi;
+        if (api && typeof api.setStyle === 'function') api.setStyle(id);
+        else { setStyle(id); saveStyle(safeStorage(), id); }
+      };
+
+      /**
+       * 换配色。走 api.applyPalette 而不是直接 commit —— 那条路才会立刻改特效主色，
+       * 并写回 pet-core 的皮肤对象。Host 设置用 applyPatch 存（跨设备同步）。
+       */
+      var changePalette = function (id) {
+        var next = paletteById(id).id;
+        if (next === palette) return;
+        var api = exports.__whaleApi;
+        if (api && typeof api.applyPalette === 'function') api.applyPalette(next);
+        savePalette(safeStorage(), next);
+        setPalette(next);
+        applyPatch({ palette: next });
       };
 
       var modeBtn = function (item) {
@@ -2171,6 +3938,124 @@ window.__ModuleLoader__.load({
           ui && ui.apiKeyConfigured
             ? h('p', { className: 'pw-dim' }, 'API key：已配置 ✓（key 只存在本机，不会显示在页面里）')
             : h('p', { className: 'pw-dim' }, 'API key：还没配置——把 key 填进 ~/.dsh/peak-whale/settings.json 的 deepseekApiKey 后即可使用。'),
+          promptStyleRow(ui, applyPatch),
+        ),
+
+        h(
+          'section',
+          { className: 'pw-set-sec' },
+          h('h4', null, '小鲸鱼人偶'),
+          h(
+            'label',
+            { className: 'pw-set-switch' },
+            h('input', {
+              type: 'checkbox',
+              checked: !!(ui && ui.petVisible),
+              onChange: function (event) {
+                applyPatch({ petVisible: event.target.checked === true });
+              },
+            }),
+            '显示小鲸鱼人偶（关掉后她不再出现，侧栏价格条不受影响）',
+          ),
+        ),
+
+        h(
+          'section',
+          { className: 'pw-set-sec' },
+          h('h4', null, '小鲸鱼的配色'),
+          h(
+            'div',
+            { className: 'pw-set-field' },
+            h('span', { className: 'pw-set-label' }, '配色'),
+            h(
+              'select',
+              {
+                className: 'pw-set-select',
+                value: palette,
+                onChange: function (event) { changePalette(event.target.value); },
+              },
+              WHALE_PALETTES.map(function (p) {
+                return h('option', { key: p.id, value: p.id }, p.label);
+              }),
+            ),
+          ),
+          h('p', { className: 'pw-dim' }, '换配色会立刻改变她竖耳听、思考、睡觉时特效的主色。她的贴图本身不变（当前只打包了原版贴图），所以身体颜色不动。'),
+        ),
+
+        h(
+          'section',
+          { className: 'pw-set-sec' },
+          h('h4', null, '小鲸鱼的动作'),
+          h('div', { className: 'pw-set-modes' }, STYLE_TIERS.map(function (tier) {
+            var active = style === tier.id;
+            return h(
+              'label',
+              { key: tier.id, className: 'pw-set-mode' + (active ? ' is-on' : '') },
+              h('input', {
+                type: 'radio',
+                name: 'pw-pet-style',
+                checked: active,
+                onChange: function () {
+                  if (!active) changeStyle(tier.id);
+                },
+              }),
+              h('span', { className: 'pw-set-mode-name' }, tier.name),
+              h('span', { className: 'pw-set-mode-note' }, tier.note),
+            );
+          })),
+          h('p', { className: 'pw-dim' }, '右键菜单里也有「活泼程度」，点一下切到下一档；「逗她玩」会从当前档的动作里随机抽一个。价格她自己待机时会顺口说一句，不用专门点。'),
+        ),
+
+        h(
+          'section',
+          { className: 'pw-set-sec' },
+          h('h4', null, '小鲸鱼的心情'),
+          h(
+            'div',
+            { className: 'pw-set-field' },
+            h('span', { className: 'pw-set-label' }, '亲密度'),
+            h(
+              'span',
+              { className: 'pw-set-value' },
+              'Lv.' + progress.level + ' / ' + MAX_LEVEL
+                + ' · 互动 ' + progress.pets + ' 次'
+                + (progress.max
+                  ? ' · 已满级'
+                  : ' · 再互动 ' + progress.toNext + ' 次升级'),
+            ),
+          ),
+          h(
+            'div',
+            { className: 'pw-set-field' },
+            h('span', { className: 'pw-set-label' }, '活力度'),
+            h('input', {
+              type: 'range',
+              min: 0,
+              max: 100,
+              step: 1,
+              value: Math.round(mood.value * 100),
+              className: 'pw-set-range',
+              onChange: function (event) {
+                applyWhaleMood((Number(event.target.value) || 0) / 100, true);
+              },
+            }),
+            h('span', { className: 'pw-set-value' }, Math.round(mood.value * 100) + '%'),
+          ),
+          h(
+            'label',
+            { className: 'pw-set-switch' },
+            h('input', {
+              type: 'checkbox',
+              checked: !!mood.manual,
+              onChange: function (event) {
+                var manual = event.target.checked === true;
+                applyWhaleMood(manual ? mood.value : moodFromPets(whale.pets), manual);
+              },
+            }),
+            '手动设定活力度（不勾则跟随亲密度自动变化）',
+          ),
+          h('p', { className: 'pw-dim' },
+            '亲密度每 ' + PETS_PER_LEVEL + ' 次互动升一级，' + MAX_LEVEL + ' 级封顶；摸她、逗她、撒爱心都会涨。活力度默认由亲密度换算，你也可以拖滑块手动调——拖过之后就不再被亲密度覆盖。'),
         ),
 
         h(
@@ -2182,8 +4067,12 @@ window.__ModuleLoader__.load({
             { className: 'pw-set-help' },
             h('li', null, '侧栏底部：当前峰 / 谷时段与距切换倒计时；侧栏够宽时还显示「余额 · 今日费用」，点击展开详情。'),
             h('li', null, '详情浮层：顶部开关切换「简洁版 / 详细版」——简洁版只留余额、今日费用、当前档与持续时间。'),
-            h('li', null, '小鲸鱼娘：点击、抚摸、拖动互动；右键菜单可换姿势、念价格、安静一会儿、自由活动、回家。'),
-            h('li', null, '把鲸鱼娘拖到输入框上 = 优化提示词。优化完成后她会问是否撤销（√ 换回原文 / × 保留），不设时限、一直等你选；期间仍可拖动她，气泡会跟着走。'),
+            h('li', null, '小鲸鱼娘：点击、抚摸、拖动互动；右键菜单可换姿势、逗她玩、摸摸头、撒爱心、换表情、陪她说句话、回家。'),
+            h('li', null, '「坐好」让她就地坐下并且不再自己乱跑，一直坐到「起来活动」；刷新页面她还是坐着的。电脑 10 分钟没人操作，她就自己起来活动了 —— 坐久了腿麻。'),
+            h('li', null, '她会看情况自己动：你打字太久会趴下来看你，你离开一会儿她会伸懒腰，长时间没人理就自己打哈欠躺下。'),
+            h('li', null, '摸得越多她越活跃（尾巴摇得更勤、待机动作更频繁）；这个亲密度是累计的，存在本机，设置页里能看等级与进度。活力度默认跟着亲密度走，也可以在设置页拖滑块手动调。'),
+            h('li', null, '把鲸鱼娘拖到输入框上 = 优化提示词。靠近输入框时她身体会亮起主色辉光，提示再拖近一点就能投递；优化完成后她直接把改写后的正文写进框里，不再保留原文、也不再问你要不要回退（想对照请自己在别处留一份）。期间仍可拖动她，气泡会跟着走。'),
+            h('li', null, '「提示词风格」是优化器用的整份底稿：换风格只换底稿，「更详细 / 更专业 / AI 自主」那三版的取向不变，也不会改变优化器要做什么。'),
             h('li', null, '「今日费用」是按官方牌价折算会话用量得出的估算，不含赠送抵扣，不是账单。'),
             h('li', null, '余额与登录态来自 DeepSeek 账户服务；查不到时详情页会写明原因。'),
           ),
@@ -2272,6 +4161,7 @@ window.__ModuleLoader__.load({
      * ③ 退避重试兜底（inject 不回调也能补上）。三条路共用 mounted 闸门，不会重复注册。
      */
     function apply(ctx) {
+      clientCtx = ctx;
       try {
         /** 把当下的上下文能力写成一行短诊断（开机竞态排查全靠它）。 */
         var describe = function (target) {
@@ -2414,6 +4304,22 @@ window.__ModuleLoader__.load({
     exports.describePeriod = describePeriod;
     exports.holidayAt = holidayAt;
     exports.affinityLevel = affinityLevel;
+    // 亲密度进度 / 活力度（纯函数与模块级镜像，设置页与测试共用）
+    exports.affinityProgress = affinityProgress;
+    exports.moodFromPets = moodFromPets;
+    exports.loadWhaleMood = loadWhaleMood;
+    exports.saveWhaleMood = saveWhaleMood;
+    exports.getWhaleMood = getWhaleMood;
+    exports.applyWhaleMood = applyWhaleMood;
+    exports.getWhaleAffinity = getWhaleAffinity;
+    exports.subscribeWhaleAffinity = subscribeWhaleAffinity;
+    exports.subscribeWhaleMood = subscribeWhaleMood;
+    exports.useWhaleAffinity = useWhaleAffinity;
+    exports.useWhaleMood = useWhaleMood;
+    exports.MOOD_KEY = MOOD_KEY;
+    exports.NEAR_COMPOSER_PX = NEAR_COMPOSER_PX;
+    // 拖拽辉光用的矩形距离（纯函数）
+    exports.rectDistance = rectDistance;
     // 「设置」按钮：面板跳转（测试可注入假 layout 服务）
     exports.openPluginsSettings = openPluginsSettings;
     exports.setLayoutService = function (next) {
@@ -2427,23 +4333,48 @@ window.__ModuleLoader__.load({
     exports.escapeTargetX = escapeTargetX;
     exports.escapePlan = escapePlan;
     exports.typingActive = typingActive;
-    // 提示词优化（拖投递 / 写回 / 撤销的纯逻辑）
+    // 提示词优化（拖投递 / 写回 / 选版的纯逻辑）
     exports.readComposer = readComposer;
     exports.writeComposer = writeComposer;
     exports.dropZone = dropZone;
     exports.pointInRect = pointInRect;
+    exports.isDropInside = isDropInside;
     exports.shouldDismissUndo = shouldDismissUndo;
     exports.optimizePrompt = optimizePrompt;
+    exports.sessionRoute = sessionRoute;
+    exports.usageNote = usageNote;
+    exports.formatThinking = formatThinking;
+    exports.thinkingNote = thinkingNote;
     exports.OPTIMIZE_ROUTE = OPTIMIZE_ROUTE;
     exports.DROP_PAD = DROP_PAD;
+    exports.DROP_SLACK_Y = DROP_SLACK_Y;
     exports.UNDO_GRACE_MS = UNDO_GRACE_MS;
     exports.AVOID_MARGIN_X = AVOID_MARGIN_X;
     exports.AVOID_CLEARANCE = AVOID_CLEARANCE;
     exports.TYPING_GRACE_MS = TYPING_GRACE_MS;
     exports.loadAffinity = loadAffinity;
     exports.saveAffinity = saveAffinity;
+    exports.loadSit = loadSit;
+    exports.saveSit = saveSit;
+    exports.STYLE_TIERS = STYLE_TIERS;
+    exports.STYLE_KEY = STYLE_KEY;
+    exports.styleTier = styleTier;
+    exports.loadStyle = loadStyle;
+    exports.saveStyle = saveStyle;
+    // 配色（第二档 #6：多配色切换）
+    exports.WHALE_PALETTES = WHALE_PALETTES;
+    exports.PALETTE_KEY = PALETTE_KEY;
+    exports.paletteById = paletteById;
+    exports.paletteAccent = paletteAccent;
+    exports.loadPalette = loadPalette;
+    exports.savePalette = savePalette;
+    exports.styleDelay = styleDelay;
+    exports.pickGesture = pickGesture;
+    exports.reactionStep = reactionStep;
+    exports.REACT = REACT;
     exports.safeStorage = safeStorage;
     exports.AFFINITY_KEY = AFFINITY_KEY;
+    exports.SIT_KEY = SIT_KEY;
     exports.SOUND_KEY = SOUND_KEY;
     exports.POSE_MOTIONS = POSE_MOTIONS;
     exports.HOME_X = HOME_X;

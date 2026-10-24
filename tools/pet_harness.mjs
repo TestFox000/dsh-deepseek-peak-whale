@@ -173,7 +173,8 @@ window.__ModuleLoader__ = {
       if (target.indexOf('/api/wallet') !== -1) {
         return Promise.resolve(new Response(
           JSON.stringify({ ok: true, account: { status: 'signed-out' }, balance: { status: 'unknown' },
-            today: { date: '2026-10-05', usd: 0.0042, requests: 1, tokens: {}, isPeak: false } }),
+            // 金额字段是 cny（v0.5.0 起按官方人民币牌价记账），与真实载荷一致
+            today: { date: '2026-10-05', cny: 4.69, requests: 1, tokens: {}, isPeak: false } }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         ));
       }
@@ -311,11 +312,13 @@ window.__ModuleLoader__ = {
 
       var api = plugin.__whaleApi;
       if (!api || !api.store) throw new Error('拿不到 __whaleApi 测试钩子');
-      push('投递: pill=' + (api.store.pill && api.store.pill.kind)
+      // 断言盯的字段叫 opt（早期版本叫 pill，改名后旧断言会永远为真 = 空操作）。
+      // 所以这里是**收紧后**的写法：没有 opt、或不是 done，都算投递失败。
+      push('投递: opt=' + (api.store.opt && api.store.opt.kind)
         + ' undo=' + !!api.store.undo
         + ' 文本=' + (box.value === beforeDrop ? '未变' : '已换'));
-      if (api.store.pill && api.store.pill.kind !== 'done') {
-        throw new Error('优化失败: ' + api.store.pill.text);
+      if (!api.store.opt || api.store.opt.kind !== 'done') {
+        throw new Error('优化没走到完成态: ' + (api.store.opt && api.store.opt.text));
       }
       if (box.value === beforeDrop) throw new Error('拖上去松手后文本框没有被改写（投递没触发）');
       if (box.value.indexOf('【优化后】') !== 0) throw new Error('写回的不是优化结果: ' + box.value.slice(0, 40));
@@ -327,7 +330,7 @@ window.__ModuleLoader__ = {
       push('撤销: ' + (box.value === original ? '原稿已写回' : '写回失败 → ' + box.value.slice(0, 40)));
       if (box.value !== original) throw new Error('撤销没有把原稿写回');
       if (api.store.undo) throw new Error('撤销之后还留着 undo 状态');
-      if (api.store.pill) throw new Error('撤销之后胶囊还没收掉');
+      if (api.store.opt) throw new Error('撤销之后优化气泡还没收掉');
 
       // 投递完她必须主动让开（api.avoidUntil 那道门）：落地 → 走出回避区
       var leaveGuard = 0;

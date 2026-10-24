@@ -17,8 +17,10 @@ import path from 'node:path';
 import {
   DIAG_ROUTE,
   OPTIMIZE_ROUTE,
+  OPTIMIZE3_ROUTE,
   SETTINGS_ROUTE,
   WALLET_ROUTE,
+  WALLET_EXPORT_ROUTE,
   accountClientMetadata,
   apply,
   buildBalanceReport,
@@ -26,6 +28,8 @@ import {
   clearDiagEntries,
   createAccountReader,
   createDiagHandler,
+  createOptimizeHandler,
+  createOptimize3Handler,
   createSettingsHandler,
   createWalletHandler,
   diagEntries,
@@ -36,6 +40,7 @@ import {
 import { readUiSettings, writeUiSettings } from '../src/optimize.js';
 import {
   KEEP_DAYS,
+  LEDGER_VERSION,
   applyEvent,
   createLedger,
   daySnapshot,
@@ -45,7 +50,9 @@ import {
   pruneDays,
   usageFromStream,
 } from '../src/wallet.js';
-import { costUsd, formatMoney, formatUsdAmount, formatTokens, resolveModel } from '../src/peak.js';
+import { createOfficialTracker, emptyOfficialState, daySpend } from '../src/official.js';
+import { beijingDateKey } from '../src/peak.js';
+import { MODELS, costCny, formatCny, formatCnyAmount, formatMoney, formatTokens, resolveModel } from '../src/peak.js';
 
 // ── 1. 模型解析与计价 ────────────────────────────────────────────────────────
 assert.equal(resolveModel('deepseek', 'deepseek-v4-pro')?.id, 'deepseek-v4-pro', 'pro 归 V4-Pro');
@@ -58,26 +65,62 @@ assert.equal(resolveModel('', ''), null, '空路由不计价');
   const buckets = { uncachedInputTokens: 1e6, outputTokens: 1e6, cacheReadTokens: 1e6, cacheWriteTokens: 0 };
   const route = { provider: 'deepseek', model: 'deepseek-chat' };
   // 2026-10-09 是周五、国庆假期已过 → 峰时；2026-10-03 在国庆假期内 → 谷时
-  const peak = costUsd(buckets, route, new Date('2026-10-09T02:00:00Z'));
-  const off = costUsd(buckets, route, new Date('2026-10-03T02:00:00Z'));
-  assert.ok(Math.abs(peak - 1.506) < 1e-12, `峰时合计应为 1.506，实得 ${peak}`);
+  // Flash 峰时牌价（元/百万 tokens）：命中 0.04 + 未命中 2 + 输出 8 = 10.04
+  const peak = costCny(buckets, route, new Date('2026-10-09T02:00:00Z'));
+  const off = costCny(buckets, route, new Date('2026-10-03T02:00:00Z'));
+  assert.ok(Math.abs(peak - 10.04) < 1e-12, `峰时合计应为 10.04 元，实得 ${peak}`);
   assert.ok(Math.abs(off * 2 - peak) < 1e-12, '谷时必须恰为峰时的一半');
-  assert.equal(costUsd(buckets, { provider: 'openai', model: 'gpt-5' }, Date.now()), null, '别的厂商不进 DeepSeek 的账');
-  assert.equal(costUsd({}, route, Date.now()), 0, '空桶计价为 0');
-  assert.equal(costUsd({ uncachedInputTokens: -5 }, route, Date.now()), 0, '负数按 0 处理，不产生负账');
+  assert.equal(costCny(buckets, { provider: 'openai', model: 'gpt-5' }, Date.now()), null, '别的厂商不进 DeepSeek 的账');
+  assert.equal(costCny({}, route, Date.now()), 0, '空桶计价为 0');
+  assert.equal(costCny({ uncachedInputTokens: -5 }, route, Date.now()), 0, '负数按 0 处理，不产生负账');
+}
+
+// ── 1b. 官方人民币牌价必须逐格对上（改价时这一节就是台账）─────────────────────
+{
+  const flash = MODELS.find((m) => m.id === 'deepseek-flash');
+  const pro = MODELS.find((m) => m.id === 'deepseek-v4-pro');
+  // 官方中文定价页（元 / 百万 tokens）：命中 / 未命中 / 输出，谷 · 峰
+  assert.deepEqual(
+    { hit: flash.cacheHit, miss: flash.cacheMiss, out: flash.output },
+    { hit: { off: 0.02, peak: 0.04 }, miss: { off: 1, peak: 2 }, out: { off: 4, peak: 8 } },
+    'Flash 牌价应与官方中文页一致',
+  );
+  assert.deepEqual(
+    { hit: pro.cacheHit, miss: pro.cacheMiss, out: pro.output },
+    { hit: { off: 0.15, peak: 0.3 }, miss: { off: 4.5, peak: 9 }, out: { off: 13.5, peak: 27 } },
+    'V4-Pro 牌价应与官方中文页一致',
+  );
+  // 人民币不是美元按汇率换算出来的：官方中英两页的隐含汇率并不相等
+  // （0.02/0.003 = 6.67，0.15/0.022 = 6.82），所以这里钉住「用的是中文页原值」，
+  // 防止有人又改回「美元价 × 某个猜的汇率」。
+  assert.ok(Math.abs(flash.cacheMiss.off - 1) < 1e-12, 'Flash 未命中谷时价就是 1 元，不是 $0.15 × 汇率');
 }
 
 // ── 2. 金额与 token 的显示格式 ──────────────────────────────────────────────
-assert.equal(formatMoney('12.3456', 'USD'), '$12.35');
+assert.equal(formatMoney('12.3456', 'USD'), '$12.35', '余额接口给什么币种就显示什么币种');
 assert.equal(formatMoney('0.0037', 'USD'), '$0.0037', '小于 1 的余额要保留 4 位，不能被四舍五入成 0');
 assert.equal(formatMoney('8.5', 'CNY'), '¥8.50');
+assert.equal(formatMoney('240.98267744', 'CNY'), '¥240.98', '人民币余额取 2 位');
 assert.equal(formatMoney('不是数'), '$—');
-assert.equal(formatUsdAmount(0), '$0.00');
-assert.equal(formatUsdAmount(0.0004), '$0.0004', '一天只花几分钱时也要看得见数字');
-assert.equal(formatUsdAmount(0.0042), '$0.0042', '末尾多余的 0 要掐掉（不是 $0.00420）');
-assert.equal(formatUsdAmount(0.0000012), '$0.00', '小到显示不出来的就老实显示 0');
-assert.equal(formatUsdAmount(1.234), '$1.23');
-assert.equal(formatUsdAmount('不是数'), '$—');
+// 当日费用（人民币）：档位按日常量级给，末尾多余的 0 掐掉但至少留 2 位
+assert.equal(formatCnyAmount(0), '¥0.00');
+assert.equal(formatCnyAmount(4.694929), '¥4.69');
+assert.equal(formatCnyAmount(1), '¥1.00');
+assert.equal(formatCnyAmount(0.042), '¥0.042', '花了几分钱时也要看得见数字');
+assert.equal(formatCnyAmount(0.0042), '¥0.0042');
+assert.equal(formatCnyAmount(0.5), '¥0.50', '钱至少留 2 位，不写成 ¥0.5');
+assert.equal(formatCnyAmount('不是数'), '¥—');
+// 价格表格：固定位数，同一列小数点对齐（不做掐零美化）
+assert.equal(formatCny(0.02), '¥0.020', '缓存命中最低档不能被舍成 0');
+assert.equal(formatCny(0.04), '¥0.040');
+assert.equal(formatCny(0.15), '¥0.150');
+assert.equal(formatCny(0.3), '¥0.300');
+assert.equal(formatCny(1), '¥1.00');
+assert.equal(formatCny(4.5), '¥4.50');
+assert.equal(formatCny(13.5), '¥13.50');
+assert.equal(formatCny(27), '¥27.00');
+assert.equal(formatCny(null), '—');
+assert.equal(formatCny('不是数'), '—');
 assert.equal(formatTokens(0), '0');
 assert.equal(formatTokens(950), '950');
 assert.equal(formatTokens(12400), '12.4k');
@@ -189,8 +232,8 @@ function referenceProjection(events) {
   assert.ok(changed >= 4);
 
   // 同一秒、同一模型 → 总花费应等于「总桶 × 单价」
-  const wantUsd = costUsd(expected, { provider: 'deepseek', model: 'deepseek-v4-pro' }, at);
-  assert.ok(Math.abs(day.usd - wantUsd) < 1e-9, `今日费用应为 ${wantUsd}，实得 ${day.usd}`);
+  const wantCny = costCny(expected, { provider: 'deepseek', model: 'deepseek-v4-pro' }, at);
+  assert.ok(Math.abs(day.cny - wantCny) < 1e-9, `今日费用应为 ${wantCny}，实得 ${day.cny}`);
 
   // 重复投递同一条事件：不改账
   const before = JSON.stringify(state.days);
@@ -211,7 +254,7 @@ function referenceProjection(events) {
     data: { turn: 0, step: 0, usage: usage(1e6, 1e6), message: { id: 'm', role: 'assistant', source: { provider: 'openai', model: 'gpt-5' } } },
   });
   assert.equal(changed, false, '别的厂商不入账');
-  assert.equal(daySnapshot(state, at).usd, 0);
+  assert.equal(daySnapshot(state, at).cny, 0);
   assert.equal(daySnapshot(state, at).requests, 0);
 }
 
@@ -240,13 +283,13 @@ function referenceProjection(events) {
 {
   const empty = daySnapshot(emptyState(), Date.parse('2026-10-03T12:00:00Z'));
   assert.equal(empty.date, '2026-10-03', '日键按北京时间算');
-  assert.equal(empty.usd, 0);
+  assert.equal(empty.cny, 0);
   assert.equal(empty.requests, 0);
   assert.equal(empty.isPeak, false, '国庆假期是谷时');
 
   const state = emptyState();
   for (let i = 1; i <= KEEP_DAYS + 5; i += 1) {
-    state.days[`2026-01-${String(i).padStart(2, '0')}`] = { usd: i, requests: 1, tokens: emptyTokens() };
+    state.days[`2026-01-${String(i).padStart(2, '0')}`] = { cny: i, requests: 1, tokens: emptyTokens() };
   }
   assert.equal(pruneDays(state), true, '超量应裁剪');
   assert.equal(Object.keys(state.days).length, KEEP_DAYS, `只留 ${KEEP_DAYS} 天`);
@@ -254,8 +297,15 @@ function referenceProjection(events) {
 
   assert.deepEqual(normalizeState({ version: 999 }), emptyState(), '版本不对就重建');
   assert.deepEqual(normalizeState('坏数据'), emptyState(), '非对象入参给空账本');
-  const restored = normalizeState({ version: 1, days: { '2026-10-03': { usd: '不是数', requests: 2 } } });
-  assert.equal(restored.days['2026-10-03'].usd, 0, '坏字段按 0 兜底');
+  // v1（美元）账本必须被丢弃：那套数是倒推汇率算出来的，与人民币牌价不是同一个数，
+  // 沿用会把错数当对账继续累加。这正是 LEDGER_VERSION 升到 2 的原因。
+  assert.deepEqual(
+    normalizeState({ version: 1, days: { '2026-10-03': { usd: 8.5, requests: 2 } } }),
+    emptyState(),
+    'v1 美元账本整份丢弃（版本闸门）',
+  );
+  const restored = normalizeState({ version: LEDGER_VERSION, days: { '2026-10-03': { cny: '不是数', requests: 2 } } });
+  assert.equal(restored.days['2026-10-03'].cny, 0, '坏字段按 0 兜底');
   assert.equal(restored.days['2026-10-03'].requests, 2);
 }
 
@@ -270,23 +320,25 @@ function referenceProjection(events) {
   assert.equal(typeof ledger.observe, 'function');
   ledger.observe('s1', header(1, 'deepseek', 'deepseek-v4-pro', at));
   ledger.observe('s1', message(2, 0, 0, usage(1e6, 1e6), at));
-  assert.equal(ledger.snapshot(at).usd > 0, true, '记账后当日有费用');
+  assert.equal(ledger.snapshot(at).cny > 0, true, '记账后当日有费用');
   routesSeen.push(ledger.snapshot(at).date);
   ledger.flush();
 
   assert.ok(fs.existsSync(file), 'flush 应把账本写到磁盘');
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-  assert.equal(raw.version, 1, '落盘要带版本号');
-  assert.ok(raw.days[routesSeen[0]].usd > 0);
+  assert.equal(raw.version, LEDGER_VERSION, '落盘要带版本号');
+  assert.equal(raw.version, 2, 'v2 = 人民币账本');
+  assert.ok(raw.days[routesSeen[0]].cny > 0);
+  assert.equal(raw.days[routesSeen[0]].usd, undefined, '落盘不能再有旧的 usd 字段');
 
   // 重新打开：今日费用还在（重启 DSH 不会把当天账清零）
   const reopened = createLedger({ file });
-  assert.equal(reopened.snapshot(at).usd, ledger.snapshot(at).usd, '重开账本要读回当日费用');
+  assert.equal(reopened.snapshot(at).cny, ledger.snapshot(at).cny, '重开账本要读回当日费用');
 
   // 坏账本：留备份、给空账，不抛
   fs.writeFileSync(file, '{ 这不是 JSON');
   const broken = createLedger({ file });
-  assert.equal(broken.snapshot(at).usd, 0, '坏账本回落到空账');
+  assert.equal(broken.snapshot(at).cny, 0, '坏账本回落到空账');
   assert.equal(fs.readdirSync(dir).some((n) => n.includes('.corrupt-')), true, '损坏文件应留一份备份');
   broken.dispose();
 
@@ -414,25 +466,61 @@ const fakePayloadReader = async (locale) => ({
 });
 
 {
-  const ledger = { snapshot: () => ({ date: '2026-10-03', usd: 0.123456, requests: 3, tokens: { uncachedInputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 }, isPeak: false }) };
+  const ledger = { snapshot: () => ({ date: '2026-10-03', cny: 0.123456, requests: 3, tokens: { uncachedInputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 }, isPeak: false }) };
   const payload = await buildWalletPayload({ reader: fakePayloadReader, ledger, locale: 'zh-CN', profile: 'desktop' });
   assert.equal(payload.ok, true);
   assert.equal(payload.account.status, 'credential-stored');
   assert.equal(payload.account.topUpUrl, 'https://x/top_up');
   assert.equal(payload.balance.wallets[0].balance, '12.3456');
-  assert.equal(payload.today.date, '2026-10-03');
-  assert.equal(payload.today.usd, 0.123456);
-  assert.equal(payload.note, 'estimate', '界面必须把它当估算来展示');
+  // 今日消费现在是官方口径：没传 official 跟踪器 → 空快照（当天日期、0 消费、available=false）
+  assert.equal(payload.today.date, beijingDateKey(new Date()), 'today 用北京时间当天');
+  assert.equal(payload.today.cny, 0, '没有官方采样时今日消费为 0');
+  assert.equal(payload.today.available, false, '没采样不算 available');
+  assert.equal(payload.note, 'official-balance-delta', '界面据此标官方口径');
+  // 本地牌价估算降级到 session（只作参考，不占金额位）
+  assert.equal(payload.session.date, '2026-10-03');
+  assert.equal(payload.session.estimateCny, 0.123456);
+  assert.equal(payload.session.requests, 3);
   assert.equal(payload.profile, 'desktop');
 
   const text = buildBalanceReport(payload);
   assert.ok(text.includes('余额：'), '报告要有余额段');
-  assert.ok(text.includes('$12.35'), '余额要格式化');
+  assert.ok(text.includes('$12.35'), '余额要按接口给的币种格式化');
   assert.ok(text.includes('赠送 $1.00'), '赠送钱包单独列');
-  assert.ok(text.includes('今日费用'), '报告要有当日费用段');
-  assert.ok(text.includes('$0.123'), '费用要有数字');
-  assert.ok(text.includes('不是账单'), '必须声明这是估算');
+  assert.ok(text.includes('今日消费'), '报告要有当日消费段');
+  assert.ok(text.includes('暂无采样'), '没有官方采样要照实说，不编 0');
+  assert.ok(text.includes('¥0.123'), `本地估算仍出现在 session 段：${text}`);
+  assert.ok(text.includes('不是账单'), '必须声明这不是账单');
   assert.ok(text.includes('https://x/top_up'), '带充值链接');
+
+  // 传了 official 跟踪器 → 今日消费 = 官方余额的下降量累计
+  const official = createOfficialTracker({});
+  const cnyReader = async (locale) => ({
+    state: { status: 'credential-stored', links: {} },
+    balance: { status: 'ready', value: [{ currency: 'CNY', balance: '250.49' }], bonusWallets: [] },
+    unavailable: false, locale,
+  });
+  await buildWalletPayload({ reader: cnyReader, official, locale: 'zh-CN' });
+  const cnyReader2 = async (locale) => ({
+    state: { status: 'credential-stored', links: {} },
+    balance: { status: 'ready', value: [{ currency: 'CNY', balance: '238.15' }], bonusWallets: [] },
+    unavailable: false, locale,
+  });
+  const payload2 = await buildWalletPayload({ reader: cnyReader2, official, locale: 'zh-CN' });
+  assert.equal(payload2.today.available, true, '有采样就算 available');
+  assert.ok(Math.abs(payload2.today.cny - 12.34) < 1e-6, `余额 250.49→238.15 应消费 12.34，实得 ${payload2.today.cny}`);
+  assert.equal(payload2.today.samples, 2, '两次读数两次采样');
+  assert.equal(payload2.today.topUps, 0, '余额只降不升，没有充值');
+
+  // 余额上升算充值、不算消费
+  const cnyReader3 = async (locale) => ({
+    state: { status: 'credential-stored', links: {} },
+    balance: { status: 'ready', value: [{ currency: 'CNY', balance: '300.00' }], bonusWallets: [] },
+    unavailable: false, locale,
+  });
+  const payload3 = await buildWalletPayload({ reader: cnyReader3, official, locale: 'zh-CN' });
+  assert.equal(payload3.today.cny, 12.34, '充值不改变已记的消费');
+  assert.ok(Math.abs(payload3.today.topUps - 61.85) < 1e-6, `余额 238.15→300 应记充值 61.85，实得 ${payload3.today.topUps}`);
 
   // 未登录
   const signedOut = await buildWalletPayload({
@@ -447,7 +535,7 @@ const fakePayloadReader = async (locale) => ({
   // 服务缺席
   const unavailable = await buildWalletPayload({ reader: null, ledger: null });
   assert.equal(unavailable.account.status, 'unavailable');
-  assert.equal(unavailable.today.usd, 0, '没有账本也要给出当日结构');
+  assert.equal(unavailable.today.cny, 0, '没有账本也要给出当日结构');
 }
 
 // ── 10. HTTP 路由处理器 ─────────────────────────────────────────────────────
@@ -467,7 +555,7 @@ function fakeResponse() {
 }
 
 {
-  const ledger = { snapshot: () => ({ date: '2026-10-03', usd: 0.5, requests: 1, tokens: emptyTokens(), isPeak: true }) };
+  const ledger = { snapshot: () => ({ date: '2026-10-03', cny: 0.5, requests: 1, tokens: emptyTokens(), isPeak: true }) };
   const handler = createWalletHandler({ reader: fakePayloadReader, ledger, profile: 'desktop' });
 
   const res = fakeResponse();
@@ -477,7 +565,8 @@ function fakeResponse() {
   assert.equal(res.headers['cache-control'], 'no-store', '余额不许被缓存');
   const payload = JSON.parse(res.body);
   assert.equal(payload.ok, true);
-  assert.equal(payload.today.usd, 0.5);
+  assert.equal(payload.today.cny, 0, '没传 official 跟踪器 → 今日消费为 0');
+  assert.equal(payload.session.estimateCny, 0.5, '本地估算在 session 段');
   assert.equal(payload.profile, 'desktop');
 
   const bad = fakeResponse();
@@ -504,11 +593,13 @@ function fakeResponse() {
   assert.equal(boomPayload.account.status, 'unavailable');
 
   // 载荷序列化不了 → 最后一道防线给 500，而不是发出半个 200
+  // 现在 session 是投影后的扁平对象，要触发不可序列化得让 official 快照自带环引用。
   const circular = {};
   circular.self = circular;
   const unserializable = createWalletHandler({
     reader: fakePayloadReader,
-    ledger: { snapshot: () => circular },
+    ledger: null,
+    official: { record() { return false; }, snapshot() { return circular; } },
     profile: 'default',
   });
   const unsRes = fakeResponse();
@@ -645,7 +736,7 @@ function makeContext(services = {}) {
   await handler({ method: 'GET', url: WALLET_ROUTE }, before);
   const beforePayload = JSON.parse(before.body);
   assert.equal(beforePayload.ok, true);
-  assert.equal(beforePayload.today.requests, 0, '还没产生用量');
+  assert.equal(beforePayload.session.requests, 0, '还没产生用量');
   assert.equal(beforePayload.balance.status, 'ready');
 
   const emit = fake.listeners.get('session/event');
@@ -655,8 +746,8 @@ function makeContext(services = {}) {
   const after = fakeResponse();
   await handler({ method: 'GET', url: WALLET_ROUTE }, after);
   const afterPayload = JSON.parse(after.body);
-  assert.equal(afterPayload.today.requests, 1, '会话事件要进账');
-  assert.equal(afterPayload.today.usd > 0, true, '今日费用不应为 0');
+  assert.equal(afterPayload.session.requests, 1, '会话事件要进账（session 段）');
+  assert.equal(afterPayload.session.estimateCny > 0, true, '本地估算今日费用不应为 0');
   assert.ok(balanceCalls >= 1, '余额应查过');
 
   // 坏会话 / 坏事件不许把插件搞崩
@@ -667,7 +758,7 @@ function makeContext(services = {}) {
   // /balance 命令是异步的，返回纯文本
   const balanceResult = await fake.commands.get('balance').handler();
   assert.equal(balanceResult.kind, 'success');
-  assert.ok(balanceResult.text.includes('今日费用'), '/balance 要有当日费用');
+  assert.ok(balanceResult.text.includes('今日消费'), '/balance 要有当日消费段');
   assert.ok(balanceResult.text.includes('余额'), '/balance 要有余额');
 
   fs.rmSync(dir, { recursive: true, force: true });
@@ -695,20 +786,20 @@ function makeContext(services = {}) {
     settingsFile: path.join(dir, 'settings.json'),
   };
   apply(fake.ctx, config);
-  assert.deepEqual(registered, [WALLET_ROUTE, SETTINGS_ROUTE, DIAG_ROUTE, OPTIMIZE_ROUTE], '第一次注册四条路由');
+  assert.deepEqual(registered, [WALLET_ROUTE, WALLET_EXPORT_ROUTE, SETTINGS_ROUTE, DIAG_ROUTE, OPTIMIZE_ROUTE, OPTIMIZE3_ROUTE], '第一次注册六条路由（含导出）');
   assert.deepEqual(disposed, [], '第一次没有旧路由可撤');
 
   apply(fake.ctx, config);
   assert.deepEqual(
     disposed,
-    [OPTIMIZE_ROUTE, DIAG_ROUTE, SETTINGS_ROUTE, WALLET_ROUTE],
+    [OPTIMIZE3_ROUTE, OPTIMIZE_ROUTE, DIAG_ROUTE, SETTINGS_ROUTE, WALLET_EXPORT_ROUTE, WALLET_ROUTE],
     '第二次注册前必须先把上一批撤掉（否则重复注册会抛）',
   );
   assert.deepEqual(
     registered,
     [
-      WALLET_ROUTE, SETTINGS_ROUTE, DIAG_ROUTE, OPTIMIZE_ROUTE,
-      WALLET_ROUTE, SETTINGS_ROUTE, DIAG_ROUTE, OPTIMIZE_ROUTE,
+      WALLET_ROUTE, WALLET_EXPORT_ROUTE, SETTINGS_ROUTE, DIAG_ROUTE, OPTIMIZE_ROUTE, OPTIMIZE3_ROUTE,
+      WALLET_ROUTE, WALLET_EXPORT_ROUTE, SETTINGS_ROUTE, DIAG_ROUTE, OPTIMIZE_ROUTE, OPTIMIZE3_ROUTE,
     ],
     '重挂就是「撤掉旧的、注册新的」，不会累积',
   );
@@ -738,7 +829,7 @@ function makeContext(services = {}) {
     fake.logs.some(([, message]) => message.includes('wallet 路由注册失败')),
     '注册失败要留下一条告警（否则现场只剩 404，什么都查不到）',
   );
-  assert.deepEqual(okPaths, [SETTINGS_ROUTE, DIAG_ROUTE, OPTIMIZE_ROUTE], '其余路由照样注册 —— 不能一起陪葬');
+  assert.deepEqual(okPaths, [WALLET_EXPORT_ROUTE, SETTINGS_ROUTE, DIAG_ROUTE, OPTIMIZE_ROUTE, OPTIMIZE3_ROUTE], '其余路由照样注册 —— 不能一起陪葬');
   assert.deepEqual([...fake.commands.keys()].sort(), ['balance', 'price'], '命令也要照常注册');
   fs.rmSync(dir, { recursive: true, force: true });
 }
@@ -749,7 +840,16 @@ function makeContext(services = {}) {
   const file = path.join(dir, 'settings.json');
 
   // 直接函数级：缺文件回落默认（v0.4.1 起默认简洁版）
-  assert.deepEqual(readUiSettings(file), { uiMode: 'concise', optimizeEnabled: true, apiKeyConfigured: false });
+  // 提示词风格那项：默认是 `default`，且清单随设置一起回传（客户端不硬编码风格名）。
+  assert.deepEqual(readUiSettings(file), {
+    uiMode: 'concise',
+    optimizeEnabled: true,
+    petVisible: true,
+    palette: 'mint',
+    apiKeyConfigured: false,
+    promptStyle: 'default',
+    promptStyles: [{ id: 'default', name: '默认', note: '不改底稿：只改写、不增删任务目标、篇幅与原文同量级。' }],
+  });
 
   // 合法写（文件不存在 → 自动按模板补齐其余键）
   let w = writeUiSettings(file, { uiMode: 'concise', optimizeEnabled: false });
@@ -780,10 +880,30 @@ function makeContext(services = {}) {
   const get = fakeResponse();
   await handler({ method: 'GET', url: SETTINGS_ROUTE }, get);
   assert.equal(get.statusCode, 200);
+  // 提示词风格也在载荷里：当前值 + 可选清单（前端据此渲染，不硬编码风格名）
   assert.deepEqual(JSON.parse(get.body), {
     ok: true,
-    settings: { uiMode: 'concise', optimizeEnabled: false, apiKeyConfigured: true },
+    settings: {
+      uiMode: 'concise',
+      optimizeEnabled: false,
+      petVisible: true,
+      palette: 'mint',
+      apiKeyConfigured: true,
+      promptStyle: 'default',
+      promptStyles: [{ id: 'default', name: '默认', note: '不改底稿：只改写、不增删任务目标、篇幅与原文同量级。' }],
+    },
   });
+
+  // 配色（第二档 #6）：合法值写入并回读；非法值拒绝（不静默存成上一档）
+  assert.equal(writeUiSettings(file, { palette: 'fox' }).ok, true, '合法配色要写成功');
+  assert.equal(readUiSettings(file).palette, 'fox');
+  assert.equal(writeUiSettings(file, { palette: 'nope' }).ok, false, '未知配色要拒绝');
+  assert.equal(readUiSettings(file).palette, 'fox', '非法写入不得改动已有值');
+
+  const badStyle = fakeResponse();
+  await handler({ method: 'POST', url: SETTINGS_ROUTE, [Symbol.asyncIterator]: async function* () { yield JSON.stringify({ promptStyle: '瞎写的' }); } }, badStyle);
+  assert.equal(badStyle.statusCode, 400, '未知风格必须 400，不能静默存成上一档（那是最难查的"看着能改其实没改"）');
+  assert.equal(JSON.parse(badStyle.body).ok, false);
 
   const post = fakeResponse();
   await handler({ method: 'POST', url: SETTINGS_ROUTE, [Symbol.asyncIterator]: async function* () { yield JSON.stringify({ uiMode: 'detailed' }); } }, post);
@@ -836,6 +956,160 @@ function makeContext(services = {}) {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+// ── 11c4. optimize 成功载荷：usage / unchanged 要透传给浏览器 ───────────────
+// 这两个字段是 v0.4.7 的新语言：usage → 完成气泡里的 token 注脚；
+// unchanged → 客户端不写回、不问撤销，改说「原文已经很清晰」。
+{
+  const post = () => fakeResponse();
+  const call = async (response, result) => {
+    const handler = createOptimizeHandler({ optimize: async () => result });
+    await handler(
+      { method: 'POST', url: OPTIMIZE_ROUTE, [Symbol.asyncIterator]: async function* () { yield JSON.stringify({ text: '原文' }); } },
+      response,
+    );
+    return JSON.parse(response.body);
+  };
+
+  // ① 正常成功：usage 与 unchanged 都要出现在载荷里
+  const okRes = post();
+  const okPayload = await call(okRes, {
+    ok: true,
+    optimized: '改好的稿子',
+    model: 'deepseek-v4-pro',
+    usage: { prompt: 120, completion: 80, total: 200 },
+    unchanged: false,
+  });
+  assert.equal(okRes.statusCode, 200);
+  assert.equal(okPayload.ok, true);
+  assert.deepEqual(okPayload.usage, { prompt: 120, completion: 80, total: 200 }, 'usage 要透传');
+  assert.equal(okPayload.unchanged, false);
+
+  // ② 无改动：unchanged=true 透传（客户端靠它跳过写回与撤销询问）
+  const samePayload = await call(post(), {
+    ok: true,
+    optimized: '原文一字未动',
+    unchanged: true,
+  });
+  assert.equal(samePayload.unchanged, true, 'unchanged=true 要透传');
+  assert.equal(samePayload.usage, null, '没给 usage 时是 null，不是 undefined 键消失');
+
+  // ③ usage 坏数据：不许把 NaN/字符串直接漏到 JSON 里
+  const dirtyPayload = await call(post(), {
+    ok: true,
+    optimized: 'x',
+    usage: { prompt: '12', completion: 'abc', total: undefined },
+  });
+  assert.equal(dirtyPayload.usage.prompt, 12, '字符串数字要收编');
+  assert.equal(dirtyPayload.usage.completion, 0, '不可解析的归 0');
+  assert.equal(dirtyPayload.usage.total, 0);
+
+  // ④ 截断失败：error 码与 message 原样给人看
+  const truncPayload = await call(post(), {
+    ok: false,
+    error: 'finish-length',
+    message: '优化结果被输出长度上限截断了',
+  });
+  assert.equal(truncPayload.ok, false);
+  assert.equal(truncPayload.error, 'finish-length', '新错误码不能被吞成 failed');
+  assert.ok(truncPayload.message.includes('截断'));
+}
+
+// ── 11c5. optimize3 路由：webToken 粘成命令时必须说人话，且绝不偷走 API 通道 ──
+// 真实事故：用户把 `copy(JSON.parse(localStorage...))` 这行**文字**粘进了 settings.json。
+// 若当没填 → 静默回落到按 token 计费的 API 通道（白花钱）；若照发 → 40003 看不懂。
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peak-whale-badtok-'));
+  const settingsFile = path.join(dir, 'settings.json');
+  const CMD = "copy(JSON.parse(localStorage.getItem('userToken')).value)";
+
+  const callOptimize3 = async (res, deps) => {
+    await createOptimize3Handler(deps)(
+      { method: 'POST', url: OPTIMIZE3_ROUTE, [Symbol.asyncIterator]: async function* () { yield JSON.stringify({ text: '原文' }); } },
+      res,
+    );
+    return JSON.parse(res.body);
+  };
+
+  fs.writeFileSync(settingsFile, JSON.stringify({ webToken: CMD, deepseekApiKey: 'sk-money' }));
+  let optimizeCalled = 0;
+  const payload = await callOptimize3(fakeResponse(), {
+    settingsFile,
+    optimize: async () => { optimizeCalled += 1; return { ok: true, variants: [] }; },
+  });
+  assert.equal(payload.ok, false, '配置错了不能假装成功');
+  assert.equal(payload.error, 'bad_web_token', '要有专属错误码，方便客户端指路');
+  assert.ok(payload.message.includes('命令'), `提示要说明是粘错了命令：${payload.message}`);
+  assert.equal(optimizeCalled, 0, '绝不能静默改用计费的 API 通道');
+
+  // 对照组 ①：webToken 留空 + 优化器没装 → 503，这是「没配后端」的合法语义
+  fs.writeFileSync(settingsFile, JSON.stringify({ webToken: '', deepseekApiKey: 'sk-money' }));
+  const offRes = fakeResponse();
+  const offPayload = await callOptimize3(offRes, { settingsFile, optimize: null });
+  assert.equal(offRes.statusCode, 503, '没装优化器又没配 token → 503');
+  assert.equal(offPayload.ok, false);
+
+  // 对照组 ②：webToken 留空 → 正常走 API 通道，三版齐全
+  const okPayload = await callOptimize3(fakeResponse(), {
+    settingsFile,
+    optimize: async (_text, key) => ({ ok: true, optimized: '改好的-' + key, unchanged: false }),
+  });
+  assert.equal(okPayload.ok, true, '没填 webToken 时照常走 API 通道');
+  assert.equal(okPayload.variants.length, 3, '三版都要有');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// ── 11c6. 网页端删除回执必须透传（2026-10-11 真事故）────────────────
+// Host 加载到旧版 webchat.js 时，会话一条都没删，但响应体 / 日志 / 本机文件
+// 三处都看不出任何异常 —— 因为 deleteSession 的结果被丢弃了。现在回执进了
+// 响应，且「零回执」要告警，这类哑失败才看得见。
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peak-whale-receipt-'));
+  const settingsFile = path.join(dir, 'settings.json');
+  fs.writeFileSync(settingsFile, JSON.stringify({ webToken: 'a'.repeat(64) }));
+
+  const callOptimize3 = async (deps) => {
+    const res = fakeResponse();
+    const warns = [];
+    await createOptimize3Handler({ settingsFile, optimize: null, log: (m) => warns.push(m), ...deps })(
+      { method: 'POST', url: OPTIMIZE3_ROUTE, [Symbol.asyncIterator]: async function* () { yield JSON.stringify({ text: '原文' }); } },
+      res,
+    );
+    return { payload: JSON.parse(res.body), warns };
+  };
+
+  // ① 正常：三条回执原样透传到响应
+  const seen = [];
+  const ok1 = await callOptimize3({
+    optimize3ViaWebChat: async (opts, text) => {
+      seen.push(opts.autoDelete);
+      return { ok: true, variants: [{ key: 'detailed' }], deletedSessions: ['s1', 's2', 's3'], deleteFailures: [] };
+    },
+  });
+  assert.deepEqual(ok1.payload.deletedSessions, ['s1', 's2', 's3'], '回执必须透传');
+  assert.equal(ok1.payload.deleteFailures.length, 0);
+  assert.equal(seen[0], true, '默认要传 autoDelete:true');
+  assert.ok(!ok1.warns.some((w) => w.includes('未确认删除')), '有回执就不该告警');
+
+  // ② 哑失败：一条都没删 → 必须告警（这正是旧副本的症状）
+  const bad = await callOptimize3({
+    optimize3ViaWebChat: async () => ({ ok: true, variants: [{ key: 'detailed' }], deletedSessions: [], deleteFailures: [] }),
+  });
+  assert.ok(bad.warns.some((w) => w.includes('未确认删除')), '零回执要告警');
+
+  // ③ keepWebSessions:true：保留会话是用户主动选的，不该被当成失败告警
+  fs.writeFileSync(settingsFile, JSON.stringify({ webToken: 'a'.repeat(64), keepWebSessions: true }));
+  const kept = await callOptimize3({
+    optimize3ViaWebChat: async (opts) => {
+      assert.equal(opts.autoDelete, false, '保留模式要传 autoDelete:false');
+      return { ok: true, variants: [{ key: 'detailed' }], deletedSessions: [], deleteFailures: [] };
+    },
+  });
+  assert.ok(!kept.warns.some((w) => w.includes('未确认删除')), '主动保留时不该告警');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 // ── 11d. 开机竞态：webServer 后到，退避重试要自动补挂 ───────────────────────
 // 这是「重启后路由全 404、重新挂载一次又好了」的真凶：apply 跑在服务就绪之前，
 // 老式 ctx.get() 只会静默拿到 undefined。现在挂不上就先排队重试。
@@ -864,7 +1138,7 @@ function makeContext(services = {}) {
   };
   const runnable = fake.timers.splice(0);
   for (const run of runnable) run();
-  assert.deepEqual(registered, [WALLET_ROUTE, SETTINGS_ROUTE, DIAG_ROUTE, OPTIMIZE_ROUTE], '服务就绪后，重试要自动把路由补上');
+  assert.deepEqual(registered, [WALLET_ROUTE, WALLET_EXPORT_ROUTE, SETTINGS_ROUTE, DIAG_ROUTE, OPTIMIZE_ROUTE, OPTIMIZE3_ROUTE], '服务就绪后，重试要自动把路由补上');
   assert.deepEqual([...fake.commands.keys()].sort(), ['balance', 'price'], '命令也一起补上');
   fs.rmSync(dir, { recursive: true, force: true });
 }
@@ -911,8 +1185,8 @@ function makeContext(services = {}) {
   });
   assert.deepEqual(
     [...registered].sort(),
-    [WALLET_ROUTE, SETTINGS_ROUTE, DIAG_ROUTE, OPTIMIZE_ROUTE].sort(),
-    '四条路由经 inject 挂上（ctx.get 拿不到 webServer 也能挂）',
+    [WALLET_ROUTE, WALLET_EXPORT_ROUTE, SETTINGS_ROUTE, DIAG_ROUTE, OPTIMIZE_ROUTE, OPTIMIZE3_ROUTE].sort(),
+    '六条路由经 inject 挂上（ctx.get 拿不到 webServer 也能挂）',
   );
   assert.equal(typeof disposer, 'function', 'host.effect 要返回撤销函数');
   disposer();

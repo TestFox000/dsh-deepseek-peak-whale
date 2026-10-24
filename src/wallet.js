@@ -20,15 +20,23 @@
  *                             于是重试的那次用量**叠加**而不是替换。
  *
  * 同一 (turn, step) 的重复样本不改账（与投影同语义），替换时按 **delta** 调整
- * token 与美元 —— 所以账本与界面上那颗「用量甜甜圈」的总数口径一致。
+ * token 与金额 —— 所以账本与界面上那颗「用量甜甜圈」的总数口径一致。
+ *
+ * ── 币种 ──────────────────────────────────────────────────────────────────────
+ * 账本按**人民币（元）**记，与官方中文牌价、账户余额（接口返回 CNY）三者一致。
+ * 字段名 `cny` 是刻意的：老的 `usd` 字段是按一套倒推汇率算出来的美元估算，
+ * 与人民币牌价不是同一个数，**不能直接沿用**——LEDGER_VERSION 因此升到 2，
+ * 旧账本整份丢弃（见下方「边界」）。
  *
  * ── 边界（请知悉）─────────────────────────────────────────────────────────────
  *   · 只统计**本插件加载之后**发生的事件：装上插件那天的前半段不补账。
  *     DSH 运行期间才会产生用量，所以此后每个自然日都是完整的。
  *   · 只统计 DeepSeek 路由（`resolveModel` 返回 null 的直接不入账）——
  *     别的厂商不走 DeepSeek 钱包。
- *   · 这是**按官方牌价的估算**，不是账单：赠送余额抵扣、议价折扣、
+ *   · 这是**按官方牌价的估算**（人民币），不是账单：赠送余额抵扣、议价折扣、
  *     计费口径的细微差异都看不到。界面文案照实说。
+ *   · **升级会丢当天的账**：LEDGER_VERSION 变了就整份重建。v1→v2（美元→人民币）
+ *     尤其如此——旧账是按倒推汇率算的，与人民币牌价不是一个数，留着只会污染合计。
  *
  * @module src/wallet.js
  */
@@ -36,10 +44,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { beijingDateKey, costUsd, periodAt, resolveModel } from './peak.js';
+import { beijingDateKey, costCny, periodAt, resolveModel } from './peak.js';
 
-/** 存储结构的版本；变了就整份重建（宁可丢一天的估算，也不读一份错账）。 */
-export const LEDGER_VERSION = 1;
+/**
+ * 存储结构的版本；变了就整份重建（宁可丢一天的估算，也不读一份错账）。
+ *
+ * v2：日账金额改用**人民币**（`usd` → `cny`）。v1 的 `usd` 是按倒推汇率算出的
+ * 美元估算，与官方人民币牌价并非同一组数字，沿用会把错数当对账继续累加，
+ * 所以整份丢弃、从零重记（代价只是「今天已花」少算一段）。
+ */
+export const LEDGER_VERSION = 2;
 /** 保留多少天的日账（界面只看当天，留 30 天够排错）。 */
 export const KEEP_DAYS = 30;
 /** 记住多少个会话的「上一个样本」（用于替换/叠加判定）。 */
@@ -208,15 +222,15 @@ export function applyEvent(state, routes, sessionId, event) {
   const key = beijingDateKey(new Date(time));
   let day = state.days[key];
   if (!day || typeof day !== 'object') {
-    day = { usd: 0, requests: 0, tokens: emptyTokens() };
+    day = { cny: 0, requests: 0, tokens: emptyTokens() };
     state.days[key] = day;
   }
   if (!day.tokens || typeof day.tokens !== 'object') day.tokens = emptyTokens();
-  if (!Number.isFinite(day.usd)) day.usd = 0;
+  if (!Number.isFinite(day.cny)) day.cny = 0;
   if (!Number.isFinite(day.requests)) day.requests = 0;
 
-  const usd = costUsd(delta, route, time);
-  if (usd !== null && Number.isFinite(usd)) day.usd = Math.max(0, day.usd + usd);
+  const cny = costCny(delta, route, time);
+  if (cny !== null && Number.isFinite(cny)) day.cny = Math.max(0, day.cny + cny);
   day.requests += 1;
   for (const bucket of Object.keys(emptyTokens())) {
     const value = Number.isFinite(day.tokens[bucket]) ? day.tokens[bucket] : 0;
@@ -235,7 +249,7 @@ function round6(value) {
  *
  * @param {object} state - 账本状态。
  * @param {number} [at] - 时刻，默认现在。
- * @returns {{date: string, usd: number, requests: number, tokens: object, isPeak: boolean}}
+ * @returns {{date: string, cny: number, requests: number, tokens: object, isPeak: boolean}}
  */
 export function daySnapshot(state, at = Date.now()) {
   const date = new Date(at);
@@ -244,7 +258,7 @@ export function daySnapshot(state, at = Date.now()) {
   const tokens = day && day.tokens && typeof day.tokens === 'object' ? day.tokens : emptyTokens();
   return {
     date: key,
-    usd: day && Number.isFinite(day.usd) ? round6(day.usd) : 0,
+    cny: day && Number.isFinite(day.cny) ? round6(day.cny) : 0,
     requests: day && Number.isFinite(day.requests) ? day.requests : 0,
     tokens: {
       uncachedInputTokens: Number.isFinite(tokens.uncachedInputTokens) ? tokens.uncachedInputTokens : 0,
@@ -285,7 +299,7 @@ export function normalizeState(raw) {
       if (!day || typeof day !== 'object') continue;
       const tokens = day.tokens && typeof day.tokens === 'object' ? day.tokens : {};
       state.days[key] = {
-        usd: Number.isFinite(day.usd) ? day.usd : 0,
+        cny: Number.isFinite(day.cny) ? day.cny : 0,
         requests: Number.isFinite(day.requests) ? day.requests : 0,
         tokens: {
           uncachedInputTokens: Number.isFinite(tokens.uncachedInputTokens) ? tokens.uncachedInputTokens : 0,
@@ -422,4 +436,62 @@ export function createLedger(options = {}) {
       return state;
     },
   };
+}
+
+/**
+ * 导出账本为 CSV 文本。
+ *
+ * 每行：日期, 费用(元), 请求数, 未缓存输入tokens, 输出tokens, 缓存读tokens, 缓存写tokens, 峰/谷时
+ * 日期倒序（最近的在前）。
+ */
+export function exportLedgerCSV(state) {
+  if (!state || !state.days) return '';
+  const rows = Object.entries(state.days)
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([date, day]) => {
+      const tokens = day.tokens || emptyTokens();
+      const isPeak = periodAt(new Date(date + 'T00:00:00Z')).isPeak;
+      return [
+        date,
+        round6(day.cny || 0).toFixed(4),
+        String(day.requests || 0),
+        String(tokens.uncachedInputTokens || 0),
+        String(tokens.outputTokens || 0),
+        String(tokens.cacheReadTokens || 0),
+        String(tokens.cacheWriteTokens || 0),
+        isPeak ? '峰时' : '谷时',
+      ].join(',');
+    });
+  const header = '日期,费用(元),请求数,未缓存输入tokens,输出tokens,缓存读tokens,缓存写tokens,时段';
+  return '\ufeff' + header + '\n' + rows.join('\n');
+}
+
+/**
+ * 导出账本为 JSON（完整原始状态，含 last 明细）。
+ */
+export function exportLedgerJSON(state) {
+  return JSON.stringify(state || emptyState(), null, 2);
+}
+
+/**
+ * 导出本月汇总（CSV）。
+ */
+export function exportMonthlyCSV(state, at = Date.now()) {
+  if (!state || !state.days) return '';
+  const date = new Date(at);
+  const month = date.getUTCFullYear() + '-' + String(date.getUTCMonth() + 1).padStart(2, '0');
+  const rows = Object.entries(state.days)
+    .filter(([key]) => key.startsWith(month))
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([date, day]) => {
+      const tokens = day.tokens || emptyTokens();
+      return [
+        date,
+        round6(day.cny || 0).toFixed(4),
+        String(day.requests || 0),
+        String(tokens.uncachedInputTokens + tokens.outputTokens + tokens.cacheReadTokens + tokens.cacheWriteTokens),
+      ].join(',');
+    });
+  const header = '日期,费用(元),请求数,总tokens';
+  return '\ufeff' + header + '\n' + rows.join('\n');
 }

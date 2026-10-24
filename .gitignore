@@ -1,0 +1,41 @@
+# ── 用户数据：绝不入库 ─────────────────────────────────────────────
+# 设置（含 API key）与账户账本都落在 $DSH_HOME/peak-whale/ 下，
+# 默认是 ~/.dsh/peak-whale/，本来就不在本目录里；下面这些是兜底，
+# 防止有人把 DSH_HOME 指到仓库根目录，或手工拷贝进来。
+settings.json
+settings.*.json
+wallet.*.json
+wallet.*.json.corrupt-*
+*.corrupt-*
+
+# 环境变量里的 API key 绝不能写成文件
+.env
+.env.*
+
+# ── 凭据与私钥 ────────────────────────────────────────────────────
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa*
+credentials.json
+secrets.json
+
+# ── 构建/工具产物 ─────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+*.tgz
+.eslintcache
+
+# ── 编辑器与系统垃圾 ──────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── 注意：client.js 与 vendor/ 必须入库 ───────────────────────────
+# client.js 是 AGPL 要求的完整对应源码的一部分（浏览器半身无法自行重建，
+# 需要 vendor/ + build.mjs 才能从源码复现），因此这两个目录不能 ignore。

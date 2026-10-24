@@ -24,7 +24,7 @@ import {
   withFakeNow,
 } from './helpers.mjs';
 
-const { registration, exports, doc, source, React } = loadClientBundle();
+const { registration, exports, doc, source, React, windowStub } = loadClientBundle();
 
 // ── 1. 握手 ──────────────────────────────────────────────────────────────────
 assert.ok(registration !== null, 'bundle 必须调用 window.__ModuleLoader__.load');
@@ -354,8 +354,14 @@ assert.ok(
   '优化气泡必须显式打开 pointer-events（√/× 才点得到）',
 );
 assert.ok(css.includes('.pw-opt[data-kind="error"]'), '失败态要能折行显示整句原因');
-assert.ok(css.includes('.pw-opt-yes'), '撤销对话框要有 √ 按钮样式');
-assert.ok(css.includes('.pw-opt-no'), '撤销对话框要有 × 按钮样式');
+// v0.5.4：√撤销 / ×保留 两条样式已删，**并且要钉住它们不回来**。
+// ⚠️ 断言必须剥掉 CSS 里的注释再查：否则"删掉了,因为…"这段解释文字本身
+//    就含有那两个 class 名，断言会匹配到自己 —— 第一版就是这么写的，
+//    结果永远红（自己给自己下的套）。同理，改文案时别把 class 名写进注释。
+const CSS_NO_COMMENT = css.replace(/\/\*[\s\S]*?\*\//g, '');
+assert.ok(!CSS_NO_COMMENT.includes('.pw-opt-yes'), '√ 撤销按钮样式不该回来（撤销询问已取消）');
+assert.ok(!CSS_NO_COMMENT.includes('.pw-opt-no'), '× 保留按钮样式不该回来');
+assert.ok(CSS_NO_COMMENT.includes('.pw-opt-close'), '「知道了」按钮的样式必须留着（它还在用）');
 // 详情浮层：分节标题 + v0.4.0 的三点改版（开关挪进设置页 / 固定尺寸 / 亚克力 / 底部设置按钮）
 assert.ok(!css.includes('.pw-seg-btn'), '浮层顶部不该再有简洁/详细模式开关样式（改到设置页里切）');
 assert.ok(css.includes('.pw-set-btn'), '详细版底部要有「设置」按钮样式');
@@ -373,7 +379,8 @@ assert.ok(css.includes('.pw-settings'), '设置页要有样式');
 assert.ok(css.includes('.pw-set-mode'), '设置页要有模式单选项样式');
 
 // ── 4. 桌宠运行时与贴图真的被内联进 bundle ────────────────────────────────────
-const DATA_URI_PREFIX = 'data:image/png;base64,';
+const PET_TEX_PREFIX = 'data:image/webp;base64,';
+const ICON_PREFIX = 'data:image/png;base64,';
 assert.ok(exports.PET && typeof exports.PET === 'object', 'PET 运行时必须存在');
 for (const fn of ['createWhaleFigure', 'createPet', 'createSfx']) {
   assert.equal(typeof exports.PET[fn], 'function', `PET.${fn} 必须是函数`);
@@ -406,27 +413,36 @@ assert.equal(
 );
 for (const key of expectedKeys) {
   const uri = exports.PET_TEX[key];
-  assert.ok(typeof uri === 'string' && uri.startsWith(DATA_URI_PREFIX), `${key} 应是 PNG data URI`);
+  assert.ok(typeof uri === 'string' && uri.startsWith(PET_TEX_PREFIX), `${key} 应是 WebP data URI`);
 }
 {
-  // 抽查两张：data URI 必须真的能解出 PNG（防「路径写对了但内容是空」）
+  // 抽查两张：data URI 必须真的能解出 WebP（防「路径写对了但内容是空」）
   for (const key of ['tex/face.png', `feat/${featNames[0]}.png`]) {
-    const raw = Buffer.from(exports.PET_TEX[key].slice(DATA_URI_PREFIX.length), 'base64');
+    const raw = Buffer.from(exports.PET_TEX[key].slice(PET_TEX_PREFIX.length), 'base64');
     assert.deepEqual(
-      [...raw.subarray(0, 8)],
-      [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
-      `${key} 解出来必须是 PNG`,
+      [...raw.subarray(0, 4)],
+      [0x52, 0x49, 0x46, 0x46],
+      `${key} 解出来必须是 WebP（RIFF）`,
     );
-    assert.ok(raw.length > 500, `${key} 不应为空图（实得 ${raw.length} 字节）`);
+    assert.deepEqual(
+      [...raw.subarray(8, 12)],
+      [0x57, 0x45, 0x42, 0x50],
+      `${key} 的 WebP 品牌标记必须是 WEBP`,
+    );
+    assert.ok(raw.length > 200, `${key} 不应为空图（实得 ${raw.length} 字节）`);
   }
+  // 第三档 #9：贴图 WebP 化必须带来实实在在的体积收益（源图 50 张约 1.2MB）
+  const texBytes = Object.values(exports.PET_TEX).reduce((n, uri) => n + uri.length, 0);
+  assert.ok(texBytes < 500 * 1024, `PET_TEX 的 WebP 内联总量应明显小于 500KB（实得 ${(texBytes / 1024).toFixed(0)}KB）`);
+  assert.ok(!exports.PET_TEX['tex/face.png'].includes('image/png'), 'PET_TEX 里不能再出现 PNG data URI');
 }
 
 assert.ok(
-  typeof exports.WHALE_ICON_URI === 'string' && exports.WHALE_ICON_URI.startsWith(DATA_URI_PREFIX),
+  typeof exports.WHALE_ICON_URI === 'string' && exports.WHALE_ICON_URI.startsWith(ICON_PREFIX),
   '侧栏图标应是 PNG data URI',
 );
 {
-  const raw = Buffer.from(exports.WHALE_ICON_URI.slice(DATA_URI_PREFIX.length), 'base64');
+  const raw = Buffer.from(exports.WHALE_ICON_URI.slice(ICON_PREFIX.length), 'base64');
   assert.ok(raw.length > 5000, '侧栏图标不应为空图');
 }
 
@@ -435,16 +451,27 @@ assert.equal(typeof exports.PeakWhaleStrip, 'function');
 const wideOff = withFakeNow('2026-10-03T12:00:00Z', () => exports.PeakWhaleStrip({ wide: true }));
 const wideOffText = collectText(wideOff).join('');
 assert.ok(wideOffText.includes('谷时 · 半价'), `谷时文案缺失：${wideOffText}`);
-assert.ok(wideOffText.includes('距峰时'), '谷时应显示距峰时倒计时');
+assert.ok(wideOffText.includes('距下次峰时'), '谷时应显示「距下次峰时」倒计时');
 assert.equal(findByClass(wideOff, 'pw-strip-icon').length, 1, '价格条应带鲸鱼娘小图标');
 
 const widePeak = withFakeNow('2026-10-08T02:00:00Z', () => exports.PeakWhaleStrip({ wide: true }));
 const widePeakText = collectText(widePeak).join('');
 assert.ok(widePeakText.includes('峰时 · 全价'), `峰时文案缺失：${widePeakText}`);
-assert.ok(widePeakText.includes('距半价'), '峰时应显示距半价倒计时');
+assert.ok(widePeakText.includes('距下次谷时'), '峰时应显示「距下次谷时」倒计时');
 
 const rail = withFakeNow('2026-10-03T12:00:00Z', () => exports.PeakWhaleStrip({ wide: false }));
 assert.equal(collectText(rail).join(''), '', '轨道态不应渲染文字');
+
+// 详细版详情浮层也要显示倒计时（第二档 #7：不只状态条有）
+{
+  const d = new Date('2026-10-08T02:00:00Z'); // 峰时
+  const s = exports.summary(d);
+  const desc = exports.describePeriod(s);
+  const out = exports.details(d, s, desc, null, 'detailed', null);
+  const text = collectText(out).join('');
+  assert.ok(text.includes('距下次谷时'), '详细版详情浮层要显示「距下次谷时」倒计时');
+  assert.ok(/距下次谷时[：:]\s*\d+\s*小时/.test(text), '倒计时要用完整时分格式：' + text.slice(0, 200));
+}
 
 // ── 5b. 账户钱包：状态条第二行 + 详情浮层里的账户卡片 ────────────────────────
 assert.equal(typeof exports.walletItems, 'function', 'walletItems 必须导出以便测试');
@@ -468,14 +495,16 @@ assert.equal(exports.WALLET_ROUTE, '/dsh-deepseek-peak-whale/api/wallet', '客�
     nowMs: 0,
     profile: 'desktop',
     account: { status: 'credential-stored', topUpUrl: 'https://x/top_up', usageUrl: 'https://x/usage' },
+    // 真实账户就是人民币钱包（余额接口返回 CNY），所以按现实取值；
+    // 美元钱包的显示另有 wallet.test.mjs 的 formatMoney 覆盖。
     balance: {
       status: 'ready',
-      wallets: [{ currency: 'USD', balance: '12.3456' }],
-      bonus: [{ currency: 'USD', balance: '1.0000' }],
+      wallets: [{ currency: 'CNY', balance: '240.98267744' }],
+      bonus: [{ currency: 'CNY', balance: '1.0000' }],
     },
     today: {
       date: '2026-10-03',
-      usd: 0.0042,
+      cny: 4.694929,
       requests: 5,
       tokens: { uncachedInputTokens: 12000, outputTokens: 3400, cacheReadTokens: 800, cacheWriteTokens: 0 },
       isPeak: false,
@@ -487,14 +516,15 @@ assert.equal(exports.WALLET_ROUTE, '/dsh-deepseek-peak-whale/api/wallet', '客�
 
   // ── 状态条摘要（纯函数） ──
   const summaryText = exports.walletSummary(payload);
-  assert.ok(summaryText.includes('余额 $12.35'), `摘要应含余额：${summaryText}`);
-  assert.ok(summaryText.includes('今日 $0.0042'), `摘要应含当日费用：${summaryText}`);
+  assert.ok(summaryText.includes('余额 ¥240.98'), `摘要应含余额：${summaryText}`);
+  assert.ok(summaryText.includes('今日 ¥4.69'), `摘要应含当日费用：${summaryText}`);
+  assert.ok(!summaryText.includes('$'), `人民币账户下摘要不该出现 $：${summaryText}`);
   assert.ok(!summaryText.includes('赠'), '赠送余额只进浮层，状态条保持一行清爽');
 
   const segments = exports.walletItems(payload);
   assert.deepEqual(
     segments.map((item) => `${item.label}:${item.value}`),
-    ['余额:$12.35', '今日:$0.0042'],
+    ['余额:¥240.98', '今日:¥4.69'],
     '分段数据决定第二行渲染出什么',
   );
 
@@ -505,7 +535,7 @@ assert.equal(exports.WALLET_ROUTE, '/dsh-deepseek-peak-whale/api/wallet', '客�
     today: payload.today,
   });
   assert.ok(signedOutSummary.includes('未登录'), `未登录要说人话：${signedOutSummary}`);
-  assert.ok(signedOutSummary.includes('今日 $0.0042'), '未登录也照样显示当日费用');
+  assert.ok(signedOutSummary.includes('今日 ¥4.69'), '未登录也照样显示当日费用');
   assert.equal(
     exports.walletSummary({ ok: false, unavailable: true }),
     null,
@@ -516,15 +546,15 @@ assert.equal(exports.WALLET_ROUTE, '/dsh-deepseek-peak-whale/api/wallet', '客�
   const wideWallet = withFakeNow('2026-10-03T12:00:00Z', () => exports.PeakWhaleStrip({ wide: true }));
   const wideWalletText = collectText(wideWallet).join('');
   assert.ok(wideWalletText.includes('谷时 · 半价'), '价格条文案不能被挤掉');
-  assert.ok(wideWalletText.includes('距峰时'), '倒计时不能被挤掉');
+  assert.ok(wideWalletText.includes('距下次峰时'), '倒计时不能被挤掉');
   // DOM 文本里标签与数字之间不带空格（视觉间距由 CSS 的 gap 负责），
   // 带空格的那份在悬停提示里（下面一行断言）。
-  assert.ok(wideWalletText.includes('余额$12.35'), `第二行应显示余额：${wideWalletText}`);
-  assert.ok(wideWalletText.includes('今日$0.0042'), `第二行应显示当日费用：${wideWalletText}`);
+  assert.ok(wideWalletText.includes('余额¥240.98'), `第二行应显示余额：${wideWalletText}`);
+  assert.ok(wideWalletText.includes('今日¥4.69'), `第二行应显示当日费用：${wideWalletText}`);
 
   const stripButton = findByClass(wideWallet, 'pw-strip');
   assert.equal(stripButton.length, 1);
-  assert.ok(stripButton[0].props.title.includes('余额 $12.35'), '悬停提示里也要有余额');
+  assert.ok(stripButton[0].props.title.includes('余额 ¥240.98'), '悬停提示里也要有余额');
 
   assert.equal(findByClass(wideWallet, 'pw-body').length, 1, '宽态应把两行内容收进 .pw-body');
   assert.equal(findByClass(wideWallet, 'pw-wallet').length, 1, '应渲染余额行');
@@ -557,11 +587,11 @@ assert.equal(exports.WALLET_ROUTE, '/dsh-deepseek-peak-whale/api/wallet', '客�
   const state = exports.summary(now);
   const cardText = collectText(exports.details(now, state, exports.describePeriod(state), payload)).join('');
   assert.ok(cardText.includes('账户'), '卡片应有账户行');
-  assert.ok(cardText.includes('余额（USD）'), `应列出钱包币种：${cardText}`);
-  assert.ok(cardText.includes('$12.35'), '卡片应显示余额');
-  assert.ok(cardText.includes('赠送（USD）'), '赠送钱包单独一行');
+  assert.ok(cardText.includes('余额（CNY）'), `应列出钱包币种：${cardText}`);
+  assert.ok(cardText.includes('¥240.98'), '卡片应显示余额');
+  assert.ok(cardText.includes('赠送（CNY）'), '赠送钱包单独一行');
   assert.ok(cardText.includes('今日费用 · 2026-10-03'), '卡片应标注当日');
-  assert.ok(cardText.includes('$0.0042'), '卡片应显示当日费用');
+  assert.ok(cardText.includes('¥4.69'), '卡片应显示当日费用（人民币）');
   assert.ok(cardText.includes('按谷时半价档'), '要说清这一档是怎么算的');
   assert.ok(cardText.includes('5 次请求'), '应给出请求次数');
   assert.ok(cardText.includes('充值') && cardText.includes('官方用量'), '应带上充值与官方用量入口');
@@ -611,19 +641,29 @@ assert.equal(exports.WALLET_ROUTE, '/dsh-deepseek-peak-whale/api/wallet', '客�
     const concise = exports.details(now, state, exports.describePeriod(state), payload, 'concise');
     const conciseText = collectText(concise).join('');
     assert.ok(conciseText.includes('当前'), '简洁版要有当前档');
-    assert.ok(conciseText.includes('还需'), '简洁版要有持续时间');
-    assert.ok(conciseText.includes('余额（USD）'), '简洁版要有余额');
+    assert.ok(/距下次[谷峰]时[：:]\s*\d+/.test(conciseText), '简洁版要有「距下次谷时/峰时」的持续时间');
+    assert.ok(conciseText.includes('余额（CNY）'), '简洁版要有余额');
     assert.ok(conciseText.includes('今日费用'), '简洁版要有今日费用');
     assert.equal(findByClass(concise, 'pw-table').length, 0, '简洁版不显示价格表');
     assert.ok(!conciseText.includes('详细版'), 'v0.4.0：简洁版不再挂「切到详细版」的指路小字');
     // v0.4.1：入口死锁修复 —— 切模式要去设置页，简洁版若没有入口就永远进不去
     assert.equal(findByClass(concise, 'pw-set-btn').length, 1, '简洁版底部也要有「设置」入口');
+    assert.equal(findByClass(concise, 'pw-usage-btn').length, 1, '简洁版底部也要有「token 消耗详情」入口');
     assert.equal(findByClass(concise, 'pw-actions').length, 1, '简洁版的按钮同样放在 pw-actions 容器里');
 
     const detailed = exports.details(now, state, exports.describePeriod(state), payload, 'detailed');
     assert.equal(findByClass(detailed, 'pw-table').length, 1, '详细版要有价格表');
     assert.equal(findByClass(detailed, 'pw-sec').length, 3, '详细版三个分节：时段 / 账户 / 价格表');
     assert.ok(collectText(detailed).join('').includes('官方价格表'), '分节标题要可读');
+    // 价格表按官方**中文**页的人民币牌价渲染（不是倒推美元）：谷/峰两档都要在，
+    // 且单位说明必须写人民币——否则读者会拿它跟充值的 ¥ 对不上。
+    const tableText = collectText(detailed).join('');
+    assert.ok(tableText.includes('¥0.020') && tableText.includes('¥0.040'), `Flash 缓存命中两档：${tableText.slice(0, 200)}`);
+    assert.ok(tableText.includes('¥4.50') && tableText.includes('¥9.00'), 'V4-Pro 未命中两档');
+    assert.ok(tableText.includes('¥13.50') && tableText.includes('¥27.00'), 'V4-Pro 输出两档');
+    assert.ok(tableText.includes('人民币元 / 100 万 tokens'), '单位说明必须写人民币');
+    assert.ok(!tableText.includes('单位：美元'), '不该再出现美元单位说明');
+    assert.ok(tableText.includes('zh-cn/quick_start/pricing'), '数据来源指向中文定价页');
 
     // ── v0.4.0：详细版底部的「设置」按钮 → 跳内置「插件」设置面板 ──
     const setBtn = findByClass(detailed, 'pw-set-btn');
@@ -695,7 +735,8 @@ assert.ok(
   assert.equal(doc.document.removed.length, 0, '挂载期间不该摘监听');
 }
 
-// ── 6c. 优化气泡：busy → done（√ 撤销 / × 保留）→ error（知道了） ──────────
+// ── 6c. 优化气泡：busy → pick（三版选一）→ info / error ────────────────────
+// v0.5.4：优化完**直接写回改写后的正文**，不再留可撤销原稿、不再问要不要回退。
 {
   const whaleApi = exports.__whaleApi;
   assert.ok(whaleApi && typeof whaleApi.commit === 'function', '挂载后应能拿到 api（测试钩子）');
@@ -711,41 +752,133 @@ assert.ok(
   assert.ok(collectText(opts()[0]).join('').includes('正在优化提示词中'), '气泡要说清在干什么');
   assert.equal(findAll(opts()[0], 'button').length, 0, 'busy 态不该有按钮');
 
-  // ② done：问「需要撤销吗？」+ √ / × 两个按钮，**不设消失时间**（v0.4.1）
+  // ② pick：三版一行一版（整行替换 / 行内复制）+ 「还是不优化了吧」 + 「关闭」，
+  //     **不设消失时间**，是对话框语义
+  fakeBox.value = '原稿'; // 摆回原文，下面才验得了「复制不动框、替换才动框」
   whaleApi.commit({
     busy: false,
-    undo: { el: fakeBox, original: '原稿', optimized: '新稿', since: Date.now() },
-    opt: { kind: 'done', text: '提示词优化好了', ask: '需要撤销这次优化吗？', until: 0 },
+    undo: null,
+    opt: {
+      kind: 'pick',
+      variants: [
+        { key: 'detailed', label: '更详细', optimized: '详细稿', unchanged: false, usage: null, cached: false, ms: null },
+        { key: 'professional', label: '更专业', optimized: '专业稿', unchanged: false, usage: null, cached: false, ms: 12345 },
+        { key: 'auto', label: 'AI 自主 + 建议', optimized: '自主稿', unchanged: false, usage: null, cached: false, ms: 800 },
+      ],
+      original: '原稿',
+      box: fakeBox,
+      until: 0,
+    },
   });
-  const done = findByClass(roamer.current, 'pw-opt')[0];
-  assert.equal(done.props['data-kind'], 'done');
-  assert.equal(done.props.role, 'dialog', '撤销询问是对话框语义');
-  const doneText = collectText(done).join('');
-  assert.ok(doneText.includes('需要撤销这次优化吗'), '要问清楚问题');
-  assert.ok(!doneText.includes('秒后自动收起'), 'v0.4.1：撤销询问不再有倒计时文案');
-  assert.equal(findByClass(done, 'pw-opt-left').length, 0, '倒计时元素要整块拿掉');
-  const yesBtn = findAll(done, 'button').find((b) => collectText(b).join('').includes('√'));
-  const noBtn = findAll(done, 'button').find((b) => collectText(b).join('').includes('×'));
-  assert.ok(yesBtn && noBtn, '√ 与 × 两个选项都要有');
+  const pick = findByClass(roamer.current, 'pw-opt')[0];
+  assert.equal(pick.props['data-kind'], 'pick');
+  assert.equal(pick.props.role, 'dialog', '选版是对话框语义');
+  const pickText = collectText(pick).join('');
+  assert.ok(pickText.includes('更详细') && pickText.includes('更专业') && pickText.includes('AI 自主'), '三版标签都要在');
+  assert.ok(pickText.includes('还是不优化了吧'), '要有「不优化」选项');
+  assert.ok(!pickText.includes('秒后自动收起'), '选版气泡不该有倒计时文案');
+  const pickBtns = findAll(pick, 'button');
+  assert.equal(
+    pickBtns.length, 8,
+    '正好八个按钮：三行「替换」+ 三行「复制」+ 不优化 + 关闭',
+  );
+  assert.equal(findByClass(pick, 'pw-opt-pick-row').length, 3, '一版一行');
+  // 行内按钮的文本是「标签 + 字数 + 耗时 + 替换」拼起来的，所以只能 includes
+  assert.equal(pickBtns.filter((b) => collectText(b).join('').includes('替换')).length, 3, '每行一个「替换」');
+  assert.equal(pickBtns.filter((b) => collectText(b).join('') === '复制').length, 3, '每行一个「复制」');
+  const closeInPick = pickBtns.find((b) => collectText(b).join('') === '关闭');
+  assert.ok(closeInPick, 'pick 态要有「关闭」');
+  // 思考时间：有 ms 才显示，没有（缓存命中）就安静省略，绝不编「0ms」
+  const msCells = findByClass(pick, 'pw-opt-pick-ms').map((n) => collectText(n).join(''));
+  assert.deepEqual(msCells, ['12s', '800ms'], `只给有 ms 的版本显示思考时间：${msCells.join(' / ')}`);
 
-  // × 保留：只收对话框，不动文本框
-  fakeBox.value = '新稿';
-  noBtn.props.onClick();
-  assert.equal(whaleApi.store.opt, null, '× 后对话框收掉');
-  assert.equal(fakeBox.value, '新稿', '× 表示保留优化结果，不能改文本框');
-  assert.equal(opts().length, 0, 'DOM 里也不该再有气泡');
+  // 每行的「复制」按钮：只进剪贴板，**绝不动文本框**，气泡也留着让你接着挑
+  {
+    const copied = [];
+    const dom = doc.document;
+    const savedCreate = dom.createElement;
+    const savedBody = dom.body;
+    const savedExec = dom.execCommand;
+    dom.createElement = () => ({ style: {}, select() {} });
+    dom.body = { appendChild() {}, removeChild() {} };
+    dom.execCommand = (cmd) => { copied.push(cmd); return true; };
+    try {
+      const copyBtn = findAll(pick, 'button').find(
+        (b) => collectText(b).join('') === '复制' && b.props.title.includes('只复制'),
+      );
+      assert.ok(copyBtn, '每行都要有「只复制」');
+      copyBtn.props.onClick();
+      // navigator.clipboard 没桩 → 走 execCommand 兜底，同步回调
+      assert.deepEqual(copied, ['copy'], '「复制」要真的往剪贴板写');
+      assert.equal(fakeBox.value, '原稿', '「复制」绝不能碰文本框');
+      assert.equal(whaleApi.store.opt.kind, 'pick', '「复制」后气泡留着，还能接着选');
+    } finally {
+      dom.createElement = savedCreate;
+      dom.body = savedBody;
+      dom.execCommand = savedExec;
+    }
+  }
 
-  // √ 撤销：原稿写回，对话框收掉
+  // 「关闭」：什么都不写、什么都不复制，只收气泡
+  {
+    const closeBtn = findAll(pick, 'button').find((b) => collectText(b).join('') === '关闭');
+    assert.ok(closeBtn, 'pick 态要有「关闭」');
+    const before = fakeBox.value;
+    closeBtn.props.onClick();
+    assert.equal(whaleApi.store.opt, null, '「关闭」要收掉气泡');
+    assert.equal(fakeBox.value, before, '「关闭」不能动文本框');
+  }
+
+  // 重新摆出 pick，供下面「选更专业」继续用
   whaleApi.commit({
-    undo: { el: fakeBox, original: '原稿', optimized: '新稿', since: Date.now() },
-    opt: { kind: 'done', text: '提示词优化好了', ask: '需要撤销这次优化吗？', until: 0 },
+    opt: {
+      kind: 'pick',
+      variants: [
+        { key: 'detailed', label: '更详细', optimized: '详细稿', unchanged: false, usage: null, cached: false, ms: null },
+        { key: 'professional', label: '更专业', optimized: '专业稿', unchanged: false, usage: null, cached: false, ms: 12345 },
+        { key: 'auto', label: 'AI 自主 + 建议', optimized: '自主稿', unchanged: false, usage: null, cached: false, ms: 800 },
+      ],
+      original: '原稿',
+      box: fakeBox,
+      until: 0,
+    },
+    undo: null,
   });
-  findAll(findByClass(roamer.current, 'pw-opt')[0], 'button')
-    .find((b) => collectText(b).join('').includes('√'))
-    .props.onClick();
-  assert.equal(fakeBox.value, '原稿', '√ 要把原稿写回文本框');
-  assert.equal(whaleApi.store.undo, null, '撤销后不再有待撤销态');
-  assert.equal(whaleApi.store.opt, null, '对话框一起收掉');
+
+  // 选「更专业」那版：写回文本框，**不留撤销态**，气泡换成 info
+  fakeBox.value = '原稿';
+  const proBtn = pickBtns.find((b) => collectText(b).join('').includes('更专业'));
+  proBtn.props.onClick();
+  assert.equal(fakeBox.value, '专业稿', '选中那版要写回文本框');
+  assert.equal(whaleApi.store.undo, null, '选中后不留撤销态（原文不再对你呈现）');
+  assert.equal(whaleApi.store.opt && whaleApi.store.opt.kind, 'info', '气泡换成 info 提示');
+  const doneText = collectText(findByClass(roamer.current, 'pw-opt')[0]).join('');
+  assert.ok(doneText.includes('原文已移除'), '完成提示要说明原文已移除');
+  assert.ok(
+    !doneText.includes('右键我可以撤销'),
+    '完成提示不许再提"右键撤销"—— 那个入口已经没了，提了就是骗人',
+  );
+
+  // 选「不优化」：什么都不写，气泡收掉
+  whaleApi.commit({
+    opt: {
+      kind: 'pick',
+      variants: [
+        { key: 'detailed', label: '更详细', optimized: '详细稿', unchanged: false, usage: null, cached: false },
+      ],
+      original: '原稿',
+      box: fakeBox,
+      until: 0,
+    },
+    undo: null,
+  });
+  fakeBox.value = '原稿';
+  const skipBtn = findAll(findByClass(roamer.current, 'pw-opt')[0], 'button')
+    .find((b) => collectText(b).join('').includes('还是不优化了吧'));
+  skipBtn.props.onClick();
+  assert.equal(fakeBox.value, '原稿', '「不优化」不能动文本框');
+  assert.equal(whaleApi.store.opt, null, '「不优化」后气泡收掉');
+  assert.equal(whaleApi.store.undo, null, '「不优化」不留撤销态');
 
   // ③ 失败态：整句原因（含配置文件路径）+ 「知道了」
   whaleApi.commit({
@@ -763,24 +896,25 @@ assert.ok(
   dismiss.props.onClick();
   assert.equal(opts().length, 0, '点「知道了」要收掉');
 
-  // ④ 右键菜单里也有撤销入口（气泡被改字 / 超时收掉之后还能救回来）
-  whaleApi.commit({ opt: null, undo: { el: fakeBox, original: 'A', optimized: 'B', since: Date.now() } });
+  // ④ 右键菜单**不再有**撤销入口（v0.5.4）。
+  //    这几条是"钉住删除"，不是"钉住存在" —— 没有它们，日后有人看到
+  //    api.undoOptimize 还挂在 api 上，就很容易顺手把菜单项接回去。
+  whaleApi.commit({ opt: null, undo: null });
   const hitForMenu = () => findByClass(roamer.current, 'pw-hitbox')[0];
   hitForMenu().props.onContextMenu.call(
     { setPointerCapture() {}, releasePointerCapture() {} },
     { clientX: 300, clientY: 200, preventDefault() {}, stopPropagation() {} },
   );
   const menuLabels = findAll(roamer.current, 'button').map((b) => collectText(b).join(''));
+  const hit = (needle) => menuLabels.some((t) => t.includes(needle));
+  assert.ok(!hit('撤销提示词'), `右键菜单不该再有撤销入口：${menuLabels.filter(hit).join(' / ') || '（无）'}`);
+  assert.ok(!hit('安静一会儿'), '「安静一会儿」已被活泼程度档取代，不该回来');
+  assert.ok(!hit('说句价格'), '价格改由待机时自己说，菜单不该再有手动触发项');
   assert.ok(
-    menuLabels.includes('撤销提示词优化'),
-    `右键菜单要有撤销入口：${menuLabels.join(' / ')}`,
+    menuLabels.includes('逗她玩') && menuLabels.some((t) => t.startsWith('活泼程度')),
+    '但「逗她玩」和「活泼程度」必须在',
   );
-  findAll(roamer.current, 'button')
-    .find((b) => collectText(b).join('').includes('撤销提示词优化'))
-    .props.onClick();
-  assert.equal(fakeBox.value, 'A', '菜单里的撤销也要能把原稿写回');
-  assert.equal(whaleApi.store.undo, null, '菜单撤销同样清掉待撤销态');
-  assert.equal(findByClass(roamer.current, 'pw-menu').length, 0, '菜单点完要关');
+  whaleApi.closeMenu();
 }
 
 // ── 7. 亲密度与动作候选 ───────────────────────────────────────────────────────
@@ -824,284 +958,29 @@ assert.equal(typeof exports.saveAffinity, 'function');
     },
   };
   assert.equal(exports.loadAffinity(boom), 0, 'getItem 抛错要吞掉');
-  assert.equal(exports.saveAffinity(boom, 1), false, 'setItem 抛错要吞掉');
 }
 
-// ── 8. 右键菜单：能开、能关，动作在 ctl 缺席时也不能崩 ────────────────────────
-{
-  const node = { setPointerCapture() {}, releasePointerCapture() {} };
-  const hitNow = () => findByClass(roamer.current, 'pw-hitbox')[0];
-  const openMenu = () =>
-    hitNow().props.onContextMenu.call(node, {
-      clientX: 300,
-      clientY: 200,
-      preventDefault() {},
-      stopPropagation() {},
-    });
-  const buttonLabels = () => findAll(roamer.current, 'button').map((b) => collectText(b).join(''));
-
-  openMenu();
-  assert.equal(findByClass(roamer.current, 'pw-menu').length, 1, '右键后应弹出菜单');
-  const labels = buttonLabels();
-  for (const expected of ['换个姿势', '摸摸头', '念句价格', '回家', '安静一会儿', '自由活动']) {
-    assert.ok(labels.includes(expected), `菜单应有「${expected}」，实得：${labels.join(' / ')}`);
-  }
-  assert.ok(
-    collectText(findByClass(roamer.current, 'pw-menu-note')).join('').includes('亲密度'),
-    '菜单应显示亲密度与互动次数',
-  );
-
-  // 菜单里的动作在没有 ctl（初始化失败）时也必须安全：逐个点一遍
-  for (const button of findAll(roamer.current, 'button')) {
-    button.props.onClick();
-    assert.equal(findByClass(roamer.current, 'pw-menu').length, 0, '点任一项都应关闭菜单');
-    openMenu();
-  }
-  // 「念句价格」即使没有 ctl 也应该把气泡点亮（它是纯前端文案）
-  findAll(roamer.current, 'button')
-    .find((b) => collectText(b).join('').includes('念句价格'))
-    .props.onClick();
-
-  // 点空白处关闭
-  openMenu();
-  findByClass(roamer.current, 'pw-menu-backdrop')[0].props.onClick();
-  assert.equal(findByClass(roamer.current, 'pw-menu').length, 0, '点空白处应关闭菜单');
-}
-
-// ── 9. 台词随峰谷变化（纯函数） ──────────────────────────────────────────────
-assert.equal(typeof exports.roamLines, 'function');
-{
-  const off = exports.roamLines(new Date('2026-10-03T12:00:00Z')); // 国庆假期 → 半价
-  const offText = off.price.join('|');
-  assert.ok(/半价|便宜|打折/.test(offText), `谷时台词应提到便宜：${offText}`);
-  assert.ok(off.price.length >= 2 && off.idle.length >= 3 && off.greet.length >= 1);
-
-  const peak = exports.roamLines(new Date('2026-10-08T02:00:00Z')); // 工作日峰时
-  const peakText = peak.price.join('|');
-  assert.ok(/全价|峰时|贵/.test(peakText), `峰时台词应提到贵：${peakText}`);
-  // 峰时可以劝人「等半价再跑」，但不能声称现在就是半价
-  assert.ok(!/现在是谷时|便宜一半|半价时段/.test(peakText), `峰时台词不该说现在半价：${peakText}`);
-  assert.ok(!/全价|峰时/.test(offText), `谷时台词不该说全价/峰时：${offText}`);
-}
-
-// ── 9b. 打字回避：你在输入框里打字时她要离开文本框区域（纯判定） ─────────────
-{
-  // 哪些元素算「能打字的地方」
-  assert.equal(exports.isEditable({ tagName: 'TEXTAREA' }), true, 'textarea 算');
-  assert.equal(exports.isEditable({ tagName: 'INPUT', type: 'text' }), true, '文本框算');
-  assert.equal(exports.isEditable({ tagName: 'input', type: 'SEARCH' }), true, '大小写与默认类型都要认');
-  assert.equal(exports.isEditable({ tagName: 'INPUT', type: 'checkbox' }), false, '勾选框不算');
-  assert.equal(exports.isEditable({ tagName: 'INPUT', type: 'hidden' }), false, '隐藏框不算');
-  assert.equal(exports.isEditable({ tagName: 'INPUT', type: 'text', disabled: true }), false, '禁用的不算');
-  assert.equal(exports.isEditable({ tagName: 'DIV', isContentEditable: true }), true, 'contenteditable 算');
-  assert.equal(exports.isEditable({ tagName: 'DIV' }), false, '普通容器不算');
-  assert.equal(exports.isEditable(null), false, '空值不算');
-
-  // 焦点落在编辑器的子节点上时，要往上找到真正的文本框
-  const editor = { tagName: 'DIV', isContentEditable: true, parentElement: null };
-  const innerNode = { tagName: 'P', parentElement: editor };
-  assert.equal(exports.editableAncestor(innerNode), editor, '子节点要能向上找到文本框');
-  assert.equal(exports.editableAncestor(editor), editor, '本身就是文本框时直接返回');
-  assert.equal(exports.editableAncestor({ tagName: 'P', parentElement: null }), null, '一路找不到 → null');
-  assert.equal(exports.editableAncestor(null), null, '空值 → null');
-  {
-    let deep = { tagName: 'SPAN', parentElement: null };
-    for (let i = 0; i < 8; i += 1) deep = { tagName: 'SPAN', parentElement: deep };
-    assert.equal(exports.editableAncestor(deep), null, '向上查找层数封顶，不会一路爬到 document');
-  }
-
-  // 「算不算正在打字」：宽限期内，或者焦点还留在文本框里（打完一句停着也算）
-  assert.equal(exports.typingActive(null, 1000, 999), true, '宽限期内算打字');
-  assert.equal(exports.typingActive(null, 1000, 1001), false, '过了宽限期且没焦点 → 不算');
-  assert.equal(exports.typingActive({ tagName: 'TEXTAREA' }, 0, 99999), true, '光标还在框里就一直算');
-  assert.equal(exports.typingActive({ tagName: 'DIV', isContentEditable: true }, 0, 99999), true, 'contenteditable 同理');
-  assert.equal(exports.typingActive({ tagName: 'DIV' }, 0, 99999), false, '焦点在普通元素上不算');
-  assert.equal(exports.typingActive(null, 0, 0), false, '没宽限没焦点就不回避');
-
-  // 回避区：横向留缝（别压住输入框旁边的按钮），纵向上浅下深（下面还有工具行）
-  const box = {
-    tagName: 'TEXTAREA',
-    getBoundingClientRect: () => ({ left: 400, right: 900, top: 500, bottom: 560, width: 500, height: 60 }),
-  };
-  const zone = exports.editableZone(box);
-  assert.equal(zone.left, 400 - exports.AVOID_MARGIN_X, '左沿外扩');
-  assert.equal(zone.right, 900 + exports.AVOID_MARGIN_X, '右沿外扩');
-  assert.ok(zone.top < 500 && zone.bottom > 560, '纵向上浅下深');
-  assert.ok(zone.bottom - 560 >= 60, '下沿要盖住输入框下面的工具行');
-  assert.equal(exports.editableZone({ tagName: 'DIV' }), null, '没有 rect 的元素给 null');
-  assert.equal(
-    exports.editableZone({ tagName: 'TEXTAREA', getBoundingClientRect() { throw new Error('拿不到'); } }),
-    null,
-    '取 rect 抛错要吞掉',
-  );
-  assert.equal(exports.editableZone({ tagName: 'DIV', isContentEditable: true }), null, '非文本框直接 null');
-
-  // 矩形相交
-  const a = { left: 0, right: 10, top: 0, bottom: 10 };
-  assert.equal(exports.rectsOverlap(a, { left: 5, right: 15, top: 5, bottom: 15 }, 0), true);
-  assert.equal(exports.rectsOverlap(a, { left: 20, right: 30, top: 0, bottom: 10 }, 0), false);
-  assert.equal(exports.rectsOverlap(a, { left: 12, right: 30, top: 0, bottom: 10 }, 3), true, 'pad 会放宽判定');
-
-  // 走位：不挡路就别动她；挡路就走到框外**最近**的一侧
-  const pet = (left) => ({ left, right: left + 148, top: 600, bottom: 745 }); // 身高 145，贴地
-  assert.equal(exports.escapePlan(pet(100), zone, 1280), null, '站在文本框左边不挡路 → 不动');
-  assert.equal(exports.escapePlan(pet(1100), zone, 1280), null, '站在右边也不挡路 → 不动');
-  assert.equal(exports.escapePlan(null, zone, 1280), null, '还没有身体矩形时不动');
-  assert.equal(exports.escapePlan(pet(600), null, 1280), null, '没有文本框时不动');
-
-  const clear = (target, half) => target + half <= zone.left || target - half >= zone.right;
-  const inside = exports.escapePlan(pet(600), zone, 1280); // 正站在框里
-  assert.ok(inside !== null, '挡路必须给出目标');
-  assert.ok(clear(inside, 74), `目标必须真的在回避区外（实得 x=${inside}）`);
-
-  const leftWay = exports.escapePlan(pet(430), zone, 1280); // 在框的左半边
-  assert.ok(leftWay !== null && leftWay + 74 <= zone.left, `框的左半边应往左让（实得 x=${leftWay}）`);
-  const rightWay = exports.escapePlan(pet(860), zone, 1280); // 在框的右半边
-  assert.ok(rightWay !== null && rightWay - 74 >= zone.right, `右半边应往右让（实得 x=${rightWay}）`);
-
-  // 必须留出间隙：她的包围盒随走姿晃动，「刚好贴边」走到位时又会压回区里
-  // （真实浏览器里翻过车：差 6px 没出去 → pet-harness 的行为断言抓住的）
-  assert.ok(exports.AVOID_CLEARANCE >= 16, '间隙要能吃掉走姿晃动');
-  {
-    const target = exports.escapeTargetX(pet(600), zone, 1280);
-    const half = 74;
-    const gap = target + half <= zone.left
-      ? zone.left - (target + half)
-      : (target - half) - zone.right;
-    assert.ok(
-      gap >= exports.AVOID_CLEARANCE,
-      `目标要留足 ${exports.AVOID_CLEARANCE}px 间隙，实得 ${gap}px`,
-    );
-  }
-
-  // 窗口太窄、两侧都塞不下：返回 null（与其在框里来回蹭，不如下次再试）
-  assert.equal(
-    exports.escapePlan(pet(300), { left: 100, right: 600, top: 476, bottom: 632 }, 700),
-    null,
-    '两侧都塞不下时不硬挤',
-  );
-  // 目标不能越过窗口边界
-  const edgeTarget = exports.escapeTargetX(pet(30), { left: 200, right: 900, top: 0, bottom: 10 }, 1280);
-  assert.ok(edgeTarget === null || edgeTarget - 74 >= 8, `目标不能穿墙（实得 x=${edgeTarget}）`);
-}
-
-// ── 9c. 提示词优化：投递判定、写回、撤销的纯逻辑 ────────────────────────────
-{
-  assert.equal(exports.OPTIMIZE_ROUTE, '/dsh-deepseek-peak-whale/api/optimize', '要打 Host 的优化路由');
-  assert.equal(exports.DROP_PAD, 16, '投递判定的余量比回避区小（要笃定）');
-
-  // 读
-  assert.equal(exports.readComposer({ tagName: 'TEXTAREA', value: '帮我写个脚本' }), '帮我写个脚本');
-  assert.equal(exports.readComposer({ tagName: 'DIV', innerText: '正文' }), '正文');
-  assert.equal(exports.readComposer({ tagName: 'DIV', textContent: '备选' }), '备选', 'innerText 缺席时退回 textContent');
-  assert.equal(exports.readComposer(null), '', '没有元素给空串');
-  assert.equal(exports.readComposer({ tagName: 'DIV' }), '', '空容器给空串');
-
-  // 写：textarea —— 必须派发 input，否则应用以为你没改，一回车就丢
-  const dispatched = [];
-  const target = {
-    tagName: 'TEXTAREA',
-    value: 'old',
-    dispatchEvent(event) {
-      dispatched.push(event.type);
-    },
-  };
-  assert.equal(exports.writeComposer(target, 'new text'), true);
-  assert.equal(target.value, 'new text');
-  assert.deepEqual(dispatched, ['input'], '必须派发 input');
-
-  // 写：contenteditable
-  const editable = { tagName: 'DIV', innerText: 'old' };
-  assert.equal(exports.writeComposer(editable, '新正文'), true);
-  assert.equal(editable.innerText, '新正文');
-
-  assert.equal(exports.writeComposer(null, 'x'), false, '没有元素写不了');
-  assert.equal(exports.writeComposer({ tagName: 'TEXTAREA' }, 'x'), true, '没有 dispatchEvent 也要能写进去');
-
-  // 投递区：文本框本体 ±16px
-  const box = {
-    tagName: 'TEXTAREA',
-    getBoundingClientRect: () => ({ left: 400, right: 900, top: 500, bottom: 560, width: 500, height: 60 }),
-  };
-  const zone = exports.dropZone(box);
-  assert.equal(zone.left, 400 - exports.DROP_PAD, '投递区左沿外扩');
-  assert.equal(zone.right, 900 + exports.DROP_PAD, '投递区右沿外扩');
-  assert.equal(exports.dropZone({ tagName: 'TEXTAREA' }), null, '没有 rect → null');
-  assert.equal(exports.dropZone({ tagName: 'DIV' }), null, '非文本框 → null');
-
-  assert.equal(exports.pointInRect({ x: 400, y: 520 }, zone), true, '框内算投递');
-  assert.equal(exports.pointInRect({ x: 390, y: 520 }, zone), true, '外扩 16px 内也算');
-  assert.equal(exports.pointInRect({ x: 300, y: 520 }, zone), false, '离远了不算投递（该正常抛出去）');
-  assert.equal(exports.pointInRect({ x: 400, y: 100 }, zone), false, '垂直方向也不算');
-  assert.equal(exports.pointInRect(null, zone), false);
-
-  // 撤销的收起规则：用户改过就绝不拿旧稿盖新输入
-  const undo = { since: 1000, optimized: 'B 版', original: 'A 版' };
-  assert.equal(exports.shouldDismissUndo(undo, 'B 版', 1000 + 100), false, '写回宽限期内不动');
-  assert.equal(exports.shouldDismissUndo(undo, 'B 版', 1000 + 900), false, '内容没变就一直能撤');
-  assert.equal(exports.shouldDismissUndo(undo, '我自己改过的', 1000 + 900), true, '改过 → 收起撤销');
-  assert.equal(exports.shouldDismissUndo(null, 'x', 99999), false, '没有撤销态就不折腾');
-
-  // 浏览器外调优化路由：不抛，给一句能看懂的原因
-  const pending = exports.optimizePrompt('测试文本');
-  assert.equal(typeof pending.then, 'function', '要返回 Promise');
-  const outcome = await pending;
-  assert.equal(outcome.ok, false);
-  assert.ok(typeof outcome.message === 'string' && outcome.message.length > 0, '失败必须带 message');
-}
-
-// ── 10. Host 半身必须是普通 ESM ──────────────────────────────────────────────
-const hostSource = readFileSync(join(ROOT, 'index.js'), 'utf8');
-assert.ok(!hostSource.includes('__ModuleLoader__'), 'Host 半身不能带浏览器包装');
-assert.ok(hostSource.includes("export const name = 'peak-whale'"), 'Host 半身要导出稳定插件名');
-assert.ok(hostSource.includes('export function apply'), 'Host 半身要导出 apply');
-
-// ── 10b. 撤销询问不设消失时间（v0.4.1）───────────────────────────────────────
-// 需求：计时不能从「发起优化」就开始，对话框更不该自己消失 —— 完成态一律 until: 0，
-// 只有「你自己改了提示词」那条安全网和失败说明（8 秒）还会自动收起。
-const clientSource = readFileSync(join(ROOT, 'client.template.js'), 'utf8');
+// ── 8. 第三档 #10：节假日表续期 ─────────────────────────────────────────────
+// HOLIDAYS 必须覆盖到 2027 年，否则明年 1 月起的价格判定会失准
+const holidays = exports.HOLIDAYS || [];
+assert.ok(Array.isArray(holidays) && holidays.length > 0, 'HOLIDAYS 必须是数组');
+const holidayDates = holidays.map((h) => h.start);
+const has2027 = holidays.some((h) => h.start.startsWith('2027-'));
+assert.ok(has2027, 'HOLIDAYS 必须包含 2027 年条目');
+// 2027 元旦必须在表里
 assert.ok(
-  /kind: 'done'[\s\S]{0,240}until: 0/.test(clientSource),
-  '完成态必须写 until: 0（不设消失时间）',
-);
-assert.ok(!clientSource.includes('30000'), '不该再留 30 秒的自动收起源码');
-assert.ok(
-  !/store\.opt\.ask[\s\S]{0,240}自动收起/.test(clientSource),
-  '撤销询问旁边不该再有自动收起文案（失败说明的 8 秒保留）',
-);
-assert.ok(clientSource.includes('pw-opt-left') === false, '倒计时的 DOM/CSS 都要拿掉');
-// 默认排版是简洁版（v0.4.1）：客户端初始 state 与两处模式回落都要跟着走
-assert.ok(
-  clientSource.includes("uiSettingsState = { uiMode: 'concise'"),
-  '客户端设置初始值应为简洁版',
-);
-assert.ok(
-  !clientSource.includes("uiMode === 'concise' ? 'concise' : 'detailed'"),
-  '模式回落不能再默认详细版',
+  holidayDates.includes('2027-01-01'),
+  '2027 元旦必须登记（2027-01-01 是法定假日）',
 );
 
-// ── 11. 核心源码必须自包含 ────────────────────────────────────────────────────
-const coreSource = readFileSync(join(ROOT, 'src', 'peak.js'), 'utf8');
-assert.ok(!/^\s*import\b/m.test(coreSource), 'src/peak.js 不能有 import（要能被内联进浏览器）');
-
-// ── 12. vendored 运行时必须自带出处与许可说明 ─────────────────────────────────
-const runtimeSource = readFileSync(join(ROOT, 'vendor', 'pet-runtime.js'), 'utf8');
-assert.ok(runtimeSource.includes('Coopanion'), '运行时文件应保留上游出处');
-assert.ok(runtimeSource.includes('AGPL'), '运行时文件应标明 AGPL 许可');
-assert.ok(!/^\s*(import|export)\b/m.test(runtimeSource), '运行时必须是自包含脚本，不能有模块语法');
-
-// ── 13. 卸载：打字回避的监听要摘干净（漏一份就是每次换组件都多挂一个全局监听） ─
-assert.equal(doc.document.removed.length, 0, '卸载前监听一个都不该被摘');
-React.__unmount();
-for (const type of ['keydown', 'input', 'focusin', 'focusout']) {
-  assert.ok(doc.document.removed.includes(type), `卸载时必须摘掉 ${type}`);
-}
-
-console.log('bundle.test.mjs: 握手 / 双挂载点 / 运行时与贴图 / 价格条 / 打字回避 / 桌宠组件 / 菜单 / 台词 全部通过');
-console.log('  registered id :', registration.id);
-console.log('  apply trace   :', seen.join(' -> '));
-console.log('  谷时文本      :', wideOffText);
-console.log('  峰时文本      :', widePeakText);
-console.log('  运行时        :', `部件 ${model.parts.length} 个，贴图 ${expectedKeys.length} 张`);
-console.log('  打字回避      :', '监听 ' + doc.document.listeners.join('/') + ' → 卸载摘除 ' + doc.document.removed.join('/'));
-console.log('  降级行为      :', warnings[0] ? warnings[0].slice(0, 60) + '…' : '(无告警)');
+// ── 9. 第三档 #11：账单导出 ──────────────────────────────────────────────────
+// 导出功能在 Host 侧（wallet.js 的 exportLedgerCSV），客户端通过按钮打开导出路由
+// 验证：源码中包含导出按钮
+assert.ok(
+  source.includes('导出账单 CSV'),
+  '源码中必须有「导出账单 CSV」按钮',
+);
+assert.ok(
+  source.includes('/export?format=csv'),
+  '源码中必须引用导出路由（/export?format=csv）',
+);

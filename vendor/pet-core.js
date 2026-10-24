@@ -521,6 +521,50 @@ export function createSfx({ storageKey = 'cortico-pet.sound.v1', volume = .55 } 
 export const EXPRESSIONS = ['neutral', 'happy', 'wink', 'love', 'shy', 'surprised', 'angry', 'sad', 'sleepy', 'thinking'];
 /** Motions: things the body does. `sit` and `sleep` last until something else happens. */
 export const MOTIONS = ['stand', 'jump', 'hop', 'look', 'turn', 'nod', 'shake', 'spin', 'sit', 'sleep', 'dizzy', 'walk', 'run'];
+/**
+ * Gestures: short body-language bits layered **over** whatever mode the body is in, the way `pulse`
+ * already is. Unlike a motion a gesture never claims the mode, so it plays over standing, sitting,
+ * walking and even being carried, and it always ends by itself.
+ *
+ * Each entry is `{dur, min, face?, blocks?}`. `min` gates it on the body being available and calm
+ * (it will not start on top of a jump or a drag), `face` holds an expression for its length,
+ * `blocks` names the modes it will not interrupt.
+ *
+ * Why a layer of its own instead of more `pulse` kinds: `pulse` only reaches `lean`/`tilt`, which is
+ * enough for a nod but not for a stretch or a tail swat — those need `sitK`, `sq`, the legs and the
+ * arm angles, all of which the figure reads fresh every frame. Adding them as modes would mean a new
+ * entry in the `step` switch and a new `faceName` branch; a gesture keeps them all in one table.
+ */
+export const GESTURES = {
+  /** A quick stretch: arms up and back, chest out, spine unbends, a small hop off the ground. */
+  stretch: { dur: 2.0, min: 'calm', face: 'sleepy', tone: .9 },
+  /** Rising onto her toes to see over the desk edge. Lean forward, body tall, head up. */
+  peek: { dur: 2.6, min: 'calm', tone: .8 },
+  /** The whale-girl shakes herself dry: fast whole-body oscillation, tail flicking on the beat. */
+  shakeout: { dur: 1.5, min: 'calm', face: 'happy', tone: 1 },
+  /** Standing on hind legs to paw at your cursor. */
+  beg: { dur: 2.2, min: 'calm', face: 'love', tone: 1 },
+  /** A slow curl in on herself and back open. */
+  curl: { dur: 2.4, min: 'calm', face: 'shy', tone: .7 },
+  /** Covering her face with both hands because you said something nice. */
+  peekaboo: { dur: 2.2, min: 'calm', face: 'shy', tone: .9 },
+  /** One hard tail swat, then a slow suspicious look around. */
+  swat: { dur: 1.6, min: 'calm', face: 'angry', tone: 1 },
+  /** Wheeze of laughter: shoulders shaking, head tipped back. */
+  giggle: { dur: 1.8, min: 'calm', face: 'happy', tone: .9 },
+  /** Bracing for a shove. */
+  brace: { dur: 1.4, min: 'any', tone: 1 },
+  /** Sinking down onto one knee, then back up. */
+  curtsy: { dur: 2.8, min: 'calm', face: 'shy', tone: .9 },
+  /** A full-body shiver, start to finish. */
+  shiver: { dur: 1.3, min: 'calm', tone: 1 },
+  /** Nudging your cursor with her nose. */
+  nudge: { dur: 2.0, min: 'calm', tone: .8 },
+  /** Licking her lips over something she wants. */
+  lick: { dur: 1.6, min: 'calm', face: 'thinking', tone: .8 },
+};
+/** How long a gesture is allowed to overlap the next one before the old one is dropped. */
+const GESTURE_OVERLAP = .55;
 /** Body modes in which the figure travels across the stage or squashes fast. */
 const MOVING_MODES = new Set(['drag', 'air', 'crouch', 'land', 'walk', 'run']);
 
@@ -555,7 +599,8 @@ export function createPet(els, opts) {
     turnAcc: 0, dx: 0, dy: 0, jumpV: 700, jumpVx: 0, xf: null, blushK: 0,
     eyeSig: '', eyeCur: null, eyePrev: null, eyeDims: [[16, 16, 0, 0], [16, 16, 0, 0]], swapAge: 9,
     glance: [0, 0], glanceAt: 0, swing: 0, swingV: 0, prevA: null, velX: 0, talkK: 0, sfxAt: 0, skid: false, cue: 0,
-    pulse: null, walkId: 0, listening: false, thinking: false, placed: false,
+    pulse: null, walkId: 0, listening: false, thinking: false, placed: false, gest: null, gestName: '',
+    mood: 0, moodTarget: 0, moodV: 0,
   };
   const pointer = { x: -1e4, y: -1e4, inside: false, vx: 0, samples: [] };
   let press = null, strokeAcc = 0, petCool = 0;
@@ -632,6 +677,36 @@ export function createPet(els, opts) {
     return true;
   }
   function pulse(kind, dur) { pet.pulse = { kind, t0: T, dur }; }
+
+  /**
+   * Starts a gesture over whatever the body is doing. Returns false when it cannot start now.
+   *
+   * A gesture never takes the mode, so it cannot strand the body: whatever mode was running keeps
+   * running underneath and reasserts itself the moment the gesture's time is up. The one thing it does
+   * own is `expr`, and it restores that too, so a gesture that is cut short leaves no stray expression.
+   */
+  function gesture(name) {
+    const g = GESTURES[name];
+    if (!g) return false;
+    // `any` is for reactions to your hands (a brace when she is picked up); the rest need a body that
+    // is standing or sitting still, so they never land on top of a jump, a walk or a carry.
+    if (g.min !== 'any' && (busy() || pet.mode === 'walk' || pet.mode === 'run')) return false;
+    const left = pet.gest ? Math.max(0, pet.gest.dur - (T - pet.gest.t0)) : 0;
+    // two gestures in a row read as fidgets, so a new one only takes over once the old is mostly done
+    if (left > GESTURE_OVERLAP) return false;
+    const wasSitting = pet.mode === 'sit' || pet.mode === 'sleep';
+    pet.gest = { name, t0: T, dur: g.dur, prevExpr: pet.expr, prevExprUntil: pet.exprUntil, wasSitting };
+    if (g.face) setExpr(g.face, g.dur);
+    return true;
+  }
+  /** The name of the gesture running right now, or '' — the figure reads this to aim its arms and tail. */
+  const gestureName = () => (pet.gest && T - pet.gest.t0 < pet.gest.dur ? pet.gest.name : '');
+
+  /**
+   * How expressive she is: 0 flat, 1 as animated as she gets. The owner sets it from how much you have
+   * been playing with her; the spring in `step` carries it, so the mood itself never snaps.
+   */
+  function setMood(v) { pet.moodTarget = clamp(typeof v === 'number' && isFinite(v) ? v : 0, 0, 1); }
 
   function setExpr(n, seconds) {
     if (n === 'sleep') { act('sleep'); return; }
@@ -858,6 +933,103 @@ export function createPet(els, opts) {
       else if (pet.pulse.kind === 'spin' && k < .5 && !pet.pulse.first) { pet.pulse.first = true; pet.facing *= -1; pet.sqv -= 1; }
     }
 
+    // a gesture plays over the mode and over any pulse; when it ends it hands the body back untouched
+    if (pet.gest) {
+      const g = pet.gest, def = GESTURES[g.name], k = (T - g.t0) / g.dur;
+      if (!def || k >= 1) {
+        pet.gest = null;
+        if (def) {
+          // Hand the face back. `setExpr` pushed `exprUntil` past the gesture on purpose (the face has
+          // to keep holding while she moves), so it must be pulled back here or the face outlives the
+          // gesture and never clears — which is what a stray `expr` left on `pet` does: the same kind of
+          // silent residue the sit-state bug had. Order matters: the old face first, so a face that was
+          // already running is restored rather than cleared.
+          if (g.prevExpr && T < g.prevExprUntil) { pet.expr = g.prevExpr; pet.exprUntil = g.prevExprUntil; }
+          else if (def.face && pet.expr === def.face) { pet.expr = null; pet.exprUntil = 0; }
+        }
+      } else {
+        // ease in over the first fifth and out over the last quarter, so nothing pops
+        const env = smooth(clamp(k / .2, 0, 1)) * smooth(clamp((1 - k) / .25, 0, 1));
+        const s = def.tone;
+        const beat = Math.sin(k * Math.PI * 4);
+        // Everything below **adds** to what the mode asked for, never replaces it: `sitT` is lerped
+        // toward a depth and `lookT` is blended into the gaze the mode built for this frame (standing
+        // tracks your cursor, sleeping tracks nothing). Writing over those instead would leave the body
+        // holding a walking lean after the gesture was over.
+        const gaze = (lx, ly) => { lookT = [lerp(lookT[0], lx, env), lerp(lookT[1], ly, env)]; };
+        switch (g.name) {
+          // front legs up, spine stretching back, then a small push off the floor
+          case 'stretch':
+            liftT += .35 * env; sitT = lerp(sitT, .12, env);
+            leanT += -16 * env * s; tiltT += 6 * env * s; bobT += 6 * env * s;
+            break;
+          // up on the toes: the hips rise and the head comes forward and up
+          case 'peek':
+            liftT += .8 * env; sitT = lerp(sitT, 0, env * .5);
+            leanT += 10 * env * s; gaze(4, -5); tiltT += -3 * env * s;
+            break;
+          // a fast full-body shiver; each beat throws the skirt and the tail out to the side
+          case 'shakeout':
+            tiltT += 16 * env * s * beat; leanT += 5 * env * s * beat;
+            bobT += 3 * env * s * Math.abs(beat); sqT += .05 * env * s * Math.abs(beat);
+            break;
+          // standing up tall on the back legs, pawing forward
+          case 'beg':
+            liftT += .9 * env; sitT = lerp(sitT, 0, env);
+            leanT += -6 * env * s; gaze(2, -6);
+            tiltT += 4 * env * s * Math.sin(k * Math.PI * 6);
+            break;
+          // curling in, shoulders up, then opening back out
+          case 'curl':
+            sitT = lerp(sitT, .85, env); sqT -= .08 * env * s;
+            leanT += 8 * env * s; tiltT += 4 * env * s; gaze(-3, 4);
+            break;
+          // both hands up over the face, peeking through the fingers
+          case 'peekaboo':
+            sitT = lerp(sitT, .3, env); gaze(0, 2); tiltT += 3 * env * s;
+            break;
+          // one hard swat to the side and a hard look round
+          case 'swat':
+            tiltT += 22 * env * s * Math.sin(k * Math.PI * 2);
+            leanT += 10 * env * s * Math.cos(k * Math.PI * 2);
+            bobT += 4 * env * s;
+            break;
+          // laughing: shoulders and head shake, chest out
+          case 'giggle':
+            tiltT += 7 * env * s * beat; leanT += 4 * env * s;
+            bobT += 2.5 * env * s * Math.abs(beat);
+            break;
+          // bracing: pulled low and wide, chin down, waiting for the shove
+          case 'brace':
+            sitT = lerp(sitT, .7, env); sqT += .12 * env * s;
+            leanT += -12 * env * s; tiltT += 5 * env * s;
+            break;
+          // down onto one knee and back up, head dipping on the way down
+          case 'curtsy':
+            sitT = lerp(sitT, .95, Math.sin(k * Math.PI) * env);
+            leanT += 9 * env * s * Math.sin(k * Math.PI * 2);
+            tiltT += 5 * env * s * Math.sin(k * Math.PI);
+            gaze(0, 3);
+            break;
+          // a shiver that runs out from the head down
+          case 'shiver':
+            tiltT += 9 * env * s * Math.sin(k * Math.PI * 10) * (1 - k * .6);
+            sqT += .04 * env * s;
+            break;
+          // leaning in to push your cursor along
+          case 'nudge':
+            leanT += 20 * env * s * Math.sin(k * Math.PI * 3);
+            liftT += .3 * env; gaze(5, 0);
+            break;
+          // lick, then a hopeful look up
+          case 'lick':
+            tiltT += 4 * env * s * Math.sin(k * Math.PI * 6);
+            gaze(3, -2); leanT += 5 * env * s;
+            break;
+        }
+      }
+    }
+
     const fname = faceName(), fc = FACES[fname].f(T, pet);
     if (fc.lookLock || pet.mode === 'sleep' || pet.mode === 'drag') lookT = [0, 0];
 
@@ -937,6 +1109,10 @@ export function createPet(els, opts) {
       if (p.age >= p.life) P.splice(i, 1);
     }
     pet.talkK *= Math.exp(-dt * 12);
+    // how lively she feels, 0..1: the owner sets it, the spring here keeps it from ever jumping
+    pet.moodV += ((pet.moodTarget - pet.mood) * 90 - pet.moodV * 13) * dt;
+    pet.mood = clamp(pet.mood + pet.moodV * dt, 0, 1);
+    pet.gestName = gestureName();
     pet._fc = fc; pet._fname = fname;
   }
 
@@ -975,7 +1151,7 @@ export function createPet(els, opts) {
     else if (pet.swapAge < .16) eyeClose = 1 - (pet.swapAge - .07) / .09;
     const face = { ...fc, eyes, gap: pet.gap.map(g => Math.min(64, g + pet.talkK * 12)), blush: pet.blushK };
     const frame = { look: pet.look, legs, low: pet.low, t: T, blink, eyeClose, acc: skin, swing: pet.swing };
-    if (custom) custom.draw(petG, face, { ...frame, face: fname, mode: pet.mode, modeT: pet.modeT, talk: pet.talkK, drowse: pet.drowse, sit: pet.sitK, facing: pet.faceVis, tilt: pet.tilt, lean, groupRot: rot });
+    if (custom) custom.draw(petG, face, { ...frame, face: fname, mode: pet.mode, modeT: pet.modeT, talk: pet.talkK, drowse: pet.drowse, sit: pet.sitK, facing: pet.faceVis, tilt: pet.tilt, lean, groupRot: rot, gest: pet.gestName, mood: pet.mood });
     else petG.innerHTML = figure(face, frame);
 
     const footY = drag ? pet.dy + 220 * S * 1.09 : pet.fy;
@@ -1113,6 +1289,7 @@ export function createPet(els, opts) {
   return {
     pet, step, render, resize, act, setExpr, walkTo, toStage, hitPet, busy,
     pointerDown, pointerMove, pointerUp, pointerLeave, dropAt, shiftDrag,
+    gesture, gestureName, setMood, GESTURES,
     get pressing() { return !!press; },
     /** Pressed, carried, airborne, walking, running, turning round, or in a nod, shake or spin: motion that frames far apart show as jumps. */
     get moving() {

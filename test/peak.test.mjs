@@ -77,7 +77,13 @@ assert.equal(holidayAt(at('2026-02-23T04:00:00Z')).name, '春节', '春节末日
 assert.equal(holidayAt(at('2026-02-24T04:00:00Z')), null, '2/24 假期已结束');
 assert.equal(holidayAt(at('2026-01-04T04:00:00Z')), null, '1/4 不是假期');
 assert.equal(holidayAt(at('2026-05-09T04:00:00Z')), null, '5/9 只是调休上班，不是假期');
-assert.equal(HOLIDAYS.length, 7, '2026 年应有 7 个法定节假日段');
+assert.equal(HOLIDAYS.length, 14, '应有 14 个法定节假日段（2026 年 7 个 + 2027 年 7 个）');
+// 2027 年节假日（按农历推算，待官方通知确认）
+assert.equal(holidayAt(at('2027-01-01T04:00:00Z')).name, '元旦', '2027 元旦');
+assert.equal(holidayAt(at('2027-02-05T04:00:00Z')).name, '春节', '2027 春节除夕');
+assert.equal(holidayAt(at('2027-02-12T04:00:00Z')).name, '春节', '2027 春节末日');
+assert.equal(holidayAt(at('2027-05-01T04:00:00Z')).name, '劳动节', '2027 劳动节');
+assert.equal(holidayAt(at('2027-10-01T04:00:00Z')).name, '国庆节', '2027 国庆节');
 
 // ── 5. 倍率 ──────────────────────────────────────────────────────────────────
 assert.equal(multiplierAt(at('2026-10-08T02:00:00Z')), 1, '峰时倍率 1');

@@ -6,14 +6,21 @@
  *   2. Client 半身 `client.js`（由 `build.mjs` 去掉 `export` 前缀后内联进浏览器 bundle）
  * 因此两端的判定逻辑**同源**，不存在漂移。不要手写第二份副本。
  *
- * ── 官方规则（https://api-docs.deepseek.com/quick_start/pricing）────────────────
+ * ── 官方规则（https://api-docs.deepseek.com/zh-cn/quick_start/pricing）─────────
  *   · 峰时（PEAK）：UTC 01:00–04:00 与 06:00–10:00，**周一至周五**，
  *                   且**排除中国法定节假日**。
  *                   （换算到北京时间即 09:00–12:00 与 14:00–18:00）
  *   · 谷时（OFF-PEAK）：其余全部时段，**价格恰为峰时的一半**。
  *                   官方原文：all other hours are off-peak, including weekends
  *                   and Chinese public holidays **in full**。
- *   · 价格单位：美元 / 每 100 万 tokens。
+ *   · 价格单位：**人民币（元）/ 每 100 万 tokens**。
+ *
+ * ── 为什么用人民币而不是美元 ──────────────────────────────────────────────────
+ *   官方中英文定价页各有一套独立牌价，**不是同一组数字换汇**：
+ *     缓存命中 Flash ¥0.02 ↔ $0.003（隐含 6.67）、V4-Pro ¥0.15 ↔ $0.022（隐含 6.82）。
+ *   两个隐含汇率并不相等，说明「人民币价 ÷ 某汇率 = 美元价」这条路本身就是错的。
+ *   既然目标用户看的是人民币账户（余额接口返回的就是 CNY），就**直接采用官方人民币牌价**，
+ *   不做任何汇率换算——换算只会引入一层无法自证的误差。
  *
  * ── 关于周末与调休 ────────────────────────────────────────────────────────────
  *   官方明确「周末整天都算谷时」，因此调休上班的周六/周日（如 2026-05-09）**仍是谷时**，
@@ -25,11 +32,11 @@
  *   否则元旦至春节前的判定会偏严（把假期误判成高峰日）。
  */
 
-/** 官方定价页（英文入口，价格以此为准）。 */
-export const PRICING_URL = 'https://api-docs.deepseek.com/quick_start/pricing';
-
-/** 官方定价页中文入口。 */
+/** 官方定价页中文入口（**人民币牌价以此为准**）。 */
 export const PRICING_URL_CN = 'https://api-docs.deepseek.com/zh-cn/quick_start/pricing';
+
+/** 官方定价页英文入口（美元牌价，仅供对照）。 */
+export const PRICING_URL = 'https://api-docs.deepseek.com/quick_start/pricing';
 
 /** 本表数据的抓取日期（用于界面标注「数据时间」）。 */
 export const PRICING_AS_OF = '2026-10-03';
@@ -44,9 +51,13 @@ export const PEAK_UTC_WINDOWS = [
 ];
 
 /**
- * 官方在售模型与价格（美元 / 100 万 tokens）。
+ * 官方在售模型与价格（**人民币元 / 100 万 tokens**，取自官方中文定价页）。
  * `off` = 谷时价，`peak` = 峰时价；官方保证 `off === peak / 2`。
  * 该不变量由 test/peak.test.mjs 断言。
+ *
+ * 官方原表（元 / 百万 tokens）：
+ *   Flash  缓存命中 0.02 / 0.04，缓存未命中 1 / 2，输出 4 / 8
+ *   V4-Pro 缓存命中 0.15 / 0.30，缓存未命中 4.5 / 9，输出 13.5 / 27
  */
 export const MODELS = [
   {
@@ -54,26 +65,31 @@ export const MODELS = [
     name: 'DeepSeek-Flash',
     short: 'Flash',
     version: 'DeepSeek-V4.1-Flash',
-    cacheHit: { off: 0.003, peak: 0.006 },
-    cacheMiss: { off: 0.15, peak: 0.3 },
-    output: { off: 0.6, peak: 1.2 },
+    cacheHit: { off: 0.02, peak: 0.04 },
+    cacheMiss: { off: 1, peak: 2 },
+    output: { off: 4, peak: 8 },
   },
   {
     id: 'deepseek-v4-pro',
     name: 'DeepSeek-V4-Pro',
     short: 'V4-Pro',
     version: 'DeepSeek-V4-Pro-0813',
-    cacheHit: { off: 0.022, peak: 0.044 },
-    cacheMiss: { off: 0.66, peak: 1.32 },
-    output: { off: 1.98, peak: 3.96 },
+    cacheHit: { off: 0.15, peak: 0.3 },
+    cacheMiss: { off: 4.5, peak: 9 },
+    output: { off: 13.5, peak: 27 },
   },
 ];
 
 /**
- * 2026 年中国法定节假日（国务院办公厅 国办发明电〔2025〕7 号）。
+ * 中国法定节假日。
  * 日期为**北京时间自然日**，闭区间；`name` 用于界面徽标。
- * 注意：元旦 1/1–1/3、春节 2/15–2/23、清明 4/4–4/6、劳动节 5/1–5/5、
- *       端午 6/19–6/21、中秋 9/25–9/27、国庆 10/1–10/7。
+ * 2026 年：国务院办公厅 国办发明电〔2025〕7 号。
+ *   元旦 1/1–1/3、春节 2/15–2/23、清明 4/4–4/6、劳动节 5/1–5/5、
+ *   端午 6/19–6/21、中秋 9/25–9/27、国庆 10/1–10/7。
+ * 2027 年：⚠ 按农历推算（2027 春节 = 2/6、端午 = 6/9、中秋 = 9/15），
+ *   国务院办公厅通知通常于前一年 11 月公布，届时需以官方通知为准。
+ *   元旦 1/1–1/3、春节 2/5–2/12、清明 4/3–4/5、劳动节 5/1–5/5、
+ *   端午 6/9–6/11、中秋 9/15–9/17、国庆 10/1–10/7。
  */
 export const HOLIDAYS = [
   { start: '2026-01-01', end: '2026-01-03', name: '元旦' },
@@ -83,6 +99,13 @@ export const HOLIDAYS = [
   { start: '2026-06-19', end: '2026-06-21', name: '端午节' },
   { start: '2026-09-25', end: '2026-09-27', name: '中秋节' },
   { start: '2026-10-01', end: '2026-10-07', name: '国庆节' },
+  { start: '2027-01-01', end: '2027-01-03', name: '元旦' },
+  { start: '2027-02-05', end: '2027-02-12', name: '春节' },
+  { start: '2027-04-03', end: '2027-04-05', name: '清明节' },
+  { start: '2027-05-01', end: '2027-05-05', name: '劳动节' },
+  { start: '2027-06-09', end: '2027-06-11', name: '端午节' },
+  { start: '2027-09-15', end: '2027-09-17', name: '中秋节' },
+  { start: '2027-10-01', end: '2027-10-07', name: '国庆节' },
 ];
 
 /** 北京时间的固定 UTC 偏移（毫秒）。中国自 1991 年起不实行夏令时。 */
@@ -326,12 +349,28 @@ export function priceOf(model, kind, isPeak) {
 }
 
 /**
- * 美元价格格式化：不足 0.1 的用 3 位小数（官方缓存命中价低到 $0.003），
- * 其余统一 2 位，保证表格里各列小数点对齐。
+ * 牌价格式化（价格表用）：**固定小数位**，不足 1 元的给 3 位、其余 2 位。
+ *
+ * 价格表是同列上下比大小的地方，位数必须整齐（`¥0.020 / ¥0.040`、`¥4.50 / ¥27.00`），
+ * 所以这里**不做**「掐掉末尾 0」那种美化——那会让同一列的小数点错开。
+ * 官方最低档 ¥0.02 用 3 位表示成 ¥0.020，既保住精度又不丢对齐。
  */
-export function formatUsd(value) {
+export function formatCny(value) {
   if (value === null || value === undefined) return '—';
-  return `$${value < 0.1 ? value.toFixed(3) : value.toFixed(2)}`;
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return `¥${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
+}
+
+/**
+ * 把定点小数字符串的末尾 0 去掉，但**至少保留 `minDec` 位**。
+ * `0.500`→`0.50`（钱不该写成 ¥0.5）、`0.042`→`0.042`（信息不许丢）。
+ */
+function trimZeros(text, minDec) {
+  const [int, dec = ''] = text.split('.');
+  let kept = dec.replace(/0+$/, '');
+  if (kept.length < minDec) kept = dec.slice(0, minDec);
+  return kept === '' ? int : `${int}.${kept}`;
 }
 
 /** 把可能是字符串/undefined 的 token 数读成非负安全整数。 */
@@ -363,7 +402,7 @@ export function resolveModel(provider, model) {
 }
 
 /**
- * 按官方牌价估算一笔用量的美元成本。
+ * 按官方牌价估算一笔用量的**人民币**成本。
  *
  * 四个计费桶与 DeepSeek 账单的口径一致（与 DSH 自带的 `tokenUsage` 投影相同）：
  *   · `uncachedInputTokens` —— 未命中缓存的输入，按「输入·未命中」计；
@@ -377,9 +416,9 @@ export function resolveModel(provider, model) {
  * @param {object} buckets - 四个 token 桶（缺省按 0）。
  * @param {{provider?: string, model?: string}} route - 计费路由。
  * @param {Date|number} at - 该笔用量发生的时刻。
- * @returns {number|null} 美元成本；非 DeepSeek 路由返回 null。
+ * @returns {number|null} 人民币成本（元）；非 DeepSeek 路由返回 null。
  */
-export function costUsd(buckets, route, at) {
+export function costCny(buckets, route, at) {
   const model = resolveModel(route?.provider, route?.model);
   if (model === null) return null;
   const date = at instanceof Date ? at : new Date(at);
@@ -415,18 +454,21 @@ export function formatMoney(value, currency) {
 }
 
 /**
- * 当日费用的美元格式化：金额越小给越多位小数，
- * 否则一整天的用量会被显示成 `$0.00`；给够位数后**掐掉末尾多余的 0**
- * （`$0.0042` 比 `$0.00420` 好读）。
+ * 当日费用的格式化（**人民币**，与牌价、余额币种一致）。
+ *
+ * 金额越小给越多位小数，否则一整天的用量会被显示成 `¥0.00`；给够位数后
+ * **掐掉末尾多余的 0**，但至少留 2 位（`¥4.69` / `¥0.042`），钱不写成 `¥0.5`。
+ *
+ * 位数比美元版收紧一档：官方谷时最低档是 ¥0.02/百万 tokens，
+ * 「一天花几分钱」在人民币量级下几乎不会出现，不必留到 5 位小数。
  */
-export function formatUsdAmount(value) {
+export function formatCnyAmount(value) {
   const n = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(n)) return '$—';
-  if (n === 0) return '$0.00';
-  if (n >= 1) return `$${n.toFixed(2)}`;
-  if (n >= 0.01) return `$${n.toFixed(3)}`;
-  const text = n.toFixed(5).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
-  return text === '' || text === '0' ? '$0.00' : `$${text}`;
+  if (!Number.isFinite(n)) return '¥—';
+  if (n === 0) return '¥0.00';
+  if (n >= 1) return `¥${n.toFixed(2)}`;
+  if (n >= 0.01) return `¥${trimZeros(n.toFixed(3), 2)}`;
+  return `¥${trimZeros(n.toFixed(4), 2)}`;
 }
 
 /** token 计数的紧凑写法：950 / 12.4k / 128k / 1.28M。 */
