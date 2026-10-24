@@ -282,7 +282,7 @@ Copy-Item src "$dest\src" -Recurse -Force
 ## 三、使用
 
 - **状态条**：侧栏底部、账号位上方（挂载在 `sidebar.footer.action`，`order: -10`），每秒刷新倒计时；侧栏收起成 56px 图标轨道时只显示鲸鱼头。
-  展开态是**两行**：上行「时段 · 倒计时」，下行「**余额 · 今日费用**」，中间一条细分隔线；
+  展开态是**两行**：上行「时段 · 倒计时」（v0.6.0 起统一显示「距下次谷时/峰时 + 完整时分」），下行「**余额 · 今日费用**」，中间一条细分隔线；
   **没拿到数据时第二行整行不渲染**——宁可保持原样，也不在侧栏底部挂一句「账户数据不可用」。
 - **点击状态条**：弹出详情浮层（价格表、**账户卡片**、下次切换、依据与来源），点浮层外关闭；打开时会立刻刷新一次余额。
 - **悬停**：title 提示里有完整的一句话摘要（含余额与今日费用）。
@@ -293,7 +293,7 @@ Copy-Item src "$dest\src" -Recurse -Force
 | 位置 | 显示 |
 |---|---|
 | 状态条第二行 | `余额 ¥240.98 · 今日 ¥4.69`（币种跟着余额接口走；未登录 → `账户 未登录 · 今日 …`；**取不到 → 整行不显示**，原因写在浮层里） |
-| 详情浮层的账户卡片 | 账户状态、每个钱包的余额、赠送余额、**今日费用（日期 + 金额，单独一段并放大）**、按哪一档计价、请求次数与 token 分解、充值 / 官方用量入口、估算声明 |
+| 详情浮层的账户卡片 | 账户状态、每个钱包的余额、赠送余额、**今日费用（日期 + 金额，单独一段并放大）**、按哪一档计价、请求次数与 token 分解、充值 / 官方用量入口、**导出账单 CSV**（v0.6.0 新增）、估算声明 |
 | `/balance` 命令 | 同上内容的纯文本版 |
 
 **余额**由 Host 半身调 DSH 自己的 `deepseekAccount.getBalance()`（Platform 账户接口）取得，
@@ -361,6 +361,7 @@ Copy-Item src "$dest\src" -Recurse -Force
 | 抛出去 | 松手 | 按松手瞬间的速度抛飞；速度 >700 有破风声，落地冲击 >1000 会**摔晕** |
 | 入场 | 挂载时 | 从窗口顶部掉下来落到地面（`enter: 'drop'`） |
 | **打字回避** | 在任何文本框里打字 / 把焦点点进文本框 | **无论她在屏幕哪个位置**，只要挡在文本框前就让开到框外最近的一侧；距离 >160px 直接跑过去 |
+| **拖拽发光反馈** | 把她拖到输入框附近（<80px） | 鲸鱼周身发出主色辉光（drop-shadow + box-shadow），提示「再拖近一点就能投递」 |
 | **投递（优化提示词）** | 写完提示词后**把她拖到输入框上松手** | 就地放下（不抛飞）→ 读原文 → 调 `/api/optimize3` **并行出三版**（更详细 / 更专业 / AI 自主+建议）→ 头顶摆**选版气泡**（一行一版，可「替换」/「复制」+「还是不优化了吧」/「关闭」，每行带思考时间）→ 替换才写回；随后她主动让开 |
 
 这些物理与反应**全部来自上游 pet-core**（`pointerDown/Move/Up`、`onEvent('touch')`），
@@ -482,6 +483,8 @@ Copy-Item src "$dest\src" -Recurse -Force
 |---|---|
 | 换个姿势 | 随机做一个动作（跳 / 小跳 / 张望 / 转身 / 点头 / 摇头 / 转圈 / 坐下 / 睡觉 / 晕 …） |
 | 摸摸头 | 触发「喜欢」表情并 +1 互动（上游把顺毛做成了划动累积，这里给个一键入口） |
+| **撒爱心** | 头顶冒爱心 + 亲密度 +1，她会站住看一眼再继续漫游 |
+| **换个表情** | 在 10 种表情里循环切换（开心 / 眨眼 / 惊讶 / 喜欢 / 生气 / 睡着 / 难过 / 得意 / 害羞 / 爱心），保持 2 秒后自动回落 |
 | 念句价格 | 立刻念一句当前峰谷的台词 |
 | 回家 | 走回出生点（`ctl.walkTo`） |
 | 安静一会儿 | 关掉自由漫游并坐下（`setRoam('off')`） |
@@ -496,13 +499,31 @@ Copy-Item src "$dest\src" -Recurse -Force
 
 #### 亲密度
 
-她身上发生的每一次互动（拎起 / 放下 / 抛出 / 戳 / 摸 / 摔晕）都算一次，
+她身上发生的每一次互动（拎起 / 放下 / 抛出 / 戳 / 摸 / 摔晕 / 撒爱心）都算一次，
 存在 `localStorage` 的 `dsh-peak-whale.affinity.v1` 里，**跨会话累积**，
 每 5 次升一级（上限 Lv.10），升级时会专门念一句。
+
+**设置页**「小鲸鱼的心情」section 显示当前亲密度等级与进度条
+（「亲密度 Lv.X / 10 · 互动 N 次 · 再互动 M 次升级」，满级显示「已满级」）。
 
 读写都包了 `try/catch`：隐私模式、配额满、JSON 损坏一律回落到 0，**存不上不影响使用**。
 `loadAffinity(storage)` / `saveAffinity(storage, pets)` 把 storage 作为参数传入而不是直接用全局，
 所以这两条路径也有单测覆盖。
+
+#### 活力度滑块
+
+设置页「小鲸鱼的心情」section 有一个 0~100 的**活力度滑块**：
+- 默认由亲密度自动换算（亲密度越高活力越高）；
+- 手动拖过之后会被标记为「手动设定」，**不再被亲密度覆盖**；
+- 想恢复自动：在 localStorage 里删掉 `dsh-peak-whale.mood.v1`，或直接在滑块上重新拖。
+
+#### 多配色切换
+
+设置页「小鲸鱼的配色」section 有 7 套配色下拉：
+**mint（薄荷）/ mono（黑白）/ navigator（海军）/ claude（暖橙）/ fox（狐狸橙）/ purple（紫罗兰）/ lemon（柠檬黄）**。
+
+切换后会改她**特效主色**（竖耳弧、思考气泡、睡 z 的强调色），
+并写回 pet-core 的 skin 对象保持一致。配色选择存 `localStorage`，跨会话生效。
 
 #### 音效
 
@@ -530,18 +551,18 @@ vendor/                   ★ 上游桌宠运行时（rig.js / figure.js / pet-c
                             + tex/ 25 张部件贴图 + feat/ 25 张五官贴图 + icon.png）
 vendor/pet-runtime.js       由 tools/vendor_pet.mjs 拼成的自包含脚本（构建产物）
 vendor/LICENSE-Coopanion-AGPL-3.0.txt   上游许可证
-tools/vendor_pet.mjs      拼接运行时：剥 import/export、贴图转 data URI、守卫校验
+tools/vendor_pet.mjs      拼接运行时：剥 import/export、贴图 PNG→WebP 转 data URI（v0.6.0）、守卫校验
 tools/pet_preview.mjs     直接跑运行时的验证页（不经过 React）
 tools/pet_harness.mjs     在真实浏览器里跑 client.js 本体（极简 React 垫片 + 虚拟时钟）
 tools/strip_preview.mjs   状态条 + 账户卡片的可视化验收页（渲染成静态 HTML → 无头截图）
 client.template.js        浏览器半身模板（组件接线、台词、菜单、账户钱包、打字回避、优化气泡、设置页 tab、插槽注册）
 build.mjs                 注入 src/peak.js + vendor/pet-runtime.js → 生成 client.js（写盘前先过语法闸门）
-client.js                 构建产物，勿手改（约 1.9MB，体积几乎全是贴图）
+client.js                 构建产物，勿手改（约 775KB，v0.6.0 起贴图改用 WebP，从 1.9MB 降 62%）
 index.js                  Host 半身：/price、/balance、wallet + optimize + settings 路由、记账监听
 
 本地调试闭环（先跑这个，再上真机）：
 
-  node test/run-all.mjs     六套全量：定价 / 账本 / 优化器（假 fetch 不花钱）/ 网页端对话
+  node test/run-all.mjs     十套全量：定价 / 账本 / 优化器（假 fetch 不花钱）/ 网页端对话
                             （假 fetch + 假 PoW 求解器：SSE 抽正文、真抓包格式、限流重试）/
                             bundle 形态（握手、三挂载点、气泡状态机、CSS 回归闸门）/ 浏览器核心 parity
   node tools/strip_preview.mjs   详情浮层（简洁/详细两版）渲染成静态 HTML → 无头截图肉眼验收
@@ -590,7 +611,7 @@ index.js                  Host 半身：/price、/balance、wallet + optimize + 
         POST 白名单校验 + 原子写盘；HTTP 同源、不发 CORS。
   性能：余额 45s 缓存 + 客户端 60s 轮询；气泡/倒计时全部走 rAF 直改 DOM，不进 React 状态。
 cordis.patch.yml          插入 id: peak-whale 这一行
-test/                     五个测试 + 运行器（自带能重渲染的迷你 React 桩）
+test/                     十个测试 + 运行器（自带能重渲染的迷你 React 桩）
 ```
 
 为什么要有构建步骤：浏览器半身必须是**自包含**的手写 bundle（DSH 不为插件跑打包器，
@@ -637,7 +658,7 @@ test/                     五个测试 + 运行器（自带能重渲染的迷你
 上游的 `examples/whale/serve.mjs` 需要一个本地 HTTP 服务器才能跑（ESM + 相对路径贴图）。
 插件里不能这么干：DSH 的插件页面没有文件系统访问，也不该为了一个桌宠去起服务、
 占端口、处理 CORS。所以运行时和贴图都内联成 data URI——
-代价是 `client.js` 约 1.8MB（其中 1.6MB 是贴图 base64），换来的是**零外部依赖**。
+代价是 `client.js` 约 775KB（v0.6.0 起贴图改用 WebP，从 1.8MB 降 62%），换来的是**零外部依赖**。
 
 > ⚠️ 三个踩过的坑：
 > ① **贴图必须是 data URI**：跨源图片喂给 WebGL 会污染画布，`texImage2D` 直接抛错。
